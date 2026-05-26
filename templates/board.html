@@ -1,0 +1,3227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Work Board</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root {
+    /* Boho 2% palette — light, warm, hue-tinted columns; cards float white. */
+    --bg:               #F8FBFC; /* frosted glass — page bg */
+    --bg-header:        #FAF6F1; /* warm cream — header bar */
+    --col-bg:           #F4F2EE; /* neutral default column tint (custom columns) */
+    --col-header:       #5B4D43; /* warm dark for column titles */
+    --card-bg:          #FFFFFF;
+    --card-border:      #E6E2DC; /* warm taupe hairline */
+    --ink:              #2C2620; /* warm near-black */
+    --muted:            #7A6F66; /* warm muted */
+    --accent:           #D97757; /* warm coral */
+    --green:            #5A9F7A; /* softer success */
+    --red:              #C8472A; /* warm alert red */
+    --amber:            #D49A3D; /* warm amber, less neon */
+    --purple:           #8E78A8; /* softer purple — ideas badge */
+    --neutral:          #ECE6DD; /* warm grey for tags / progress / counts */
+    /* Boho per-column tints (2% off-white in each hue family) */
+    --col-ideas:        #FDFAFB; /* cotton candy */
+    --col-backlog:      #FDFAF5; /* soft camel */
+    --col-inprogress:   #FDFCF6; /* vanilla ice cream */
+    --col-blocked:      #FAF8FC; /* blueberry cream */
+    --col-done:         #F9FCF9; /* morning mist */
+    --shadow:       0 1px 0 rgba(44,38,32,.08), 0 1px 2px rgba(44,38,32,.05);
+    --shadow-hover: 0 4px 12px rgba(44,38,32,.10), 0 1px 3px rgba(44,38,32,.06);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    overflow: hidden;
+    font-size: 14px;
+    line-height: 1.4;
+  }
+  header {
+    height: 48px;
+    padding: 0 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--bg-header);
+    color: var(--ink);
+    border-bottom: 1px solid var(--card-border);
+    flex-shrink: 0;
+    position: relative; /* anchor for absolutely-centered title */
+  }
+  /* Dead-center the title inside the header — independent of the
+     left/right item widths, so it stays centered even as status text
+     grows or the view-toggle changes width. */
+  /* Title wrapper holds the H1 + status dot together, dead-centered as a unit. */
+  header .title-wrap {
+    position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    display: flex; align-items: center; gap: 8px;
+    max-width: 60%;
+    z-index: 1;
+  }
+  header h1 {
+    font-size: 19px; margin: 0; font-weight: 600;
+    letter-spacing: -0.01em;
+    cursor: pointer; padding: 3px 10px; border-radius: 5px;
+    transition: background .12s;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  header h1:hover { background: rgba(217,119,87,.10); }
+  header h1[contenteditable="true"] {
+    cursor: text; background: rgba(217,119,87,.10);
+    outline: 1px solid var(--accent); outline-offset: 2px;
+  }
+  header .sp { flex: 1; }
+  header button {
+    background: rgba(217,119,87,.08); color: var(--ink);
+    border: 1px solid var(--card-border);
+    padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 13px;
+  }
+  header button:hover { background: rgba(217,119,87,.16); border-color: var(--accent); }
+  header .status {
+    font-size: 12px; color: var(--muted);
+    display: flex; align-items: center; gap: 6px;
+  }
+  header .status .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--green);
+    box-shadow: 0 0 0 0 rgba(90,159,122,.5);
+    animation: live-pulse 2.4s ease-out infinite;
+  }
+  header .status.unsynced .dot { background: var(--amber); animation: none; }
+  header .status.error    .dot { background: var(--red);   animation: none; }
+  /* v2: brief green flash on any card whose updatedAt/column changed since last poll. */
+  @keyframes card-flash {
+    0%   { box-shadow: 0 0 0 2px rgba(90,159,122,.6), 0 4px 14px rgba(90,159,122,.30); background: #EDF7F1; }
+    100% { box-shadow: var(--shadow); background: var(--card-bg); }
+  }
+  .card.flashing { animation: card-flash 1200ms ease-out; }
+  /* v4: card pop-in — used when serve.py broadcasts a card-added SSE event.
+     Overshoot easing gives the "pop" feel. 320ms is the sweet spot for a
+     200ms stream pace (cards overlap slightly without feeling chaotic). */
+  @keyframes card-pop-in {
+    0%   { opacity: 0; transform: translateY(-12px) scale(0.92); box-shadow: 0 8px 24px rgba(217,119,87,.32); }
+    60%  { opacity: 1; transform: translateY(0)    scale(1.04); }
+    100% { opacity: 1; transform: translateY(0)    scale(1);    box-shadow: var(--shadow); }
+  }
+  .card.popping-in { animation: card-pop-in 320ms cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+  /* v4: card pulse on update (subtask checked, priority changed, etc) */
+  @keyframes card-pulse {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.02); }
+  }
+  .card.pulsing { animation: card-pulse 200ms ease-out; }
+  /* v4: card removal — reverse pop, collapses height for smooth re-flow */
+  @keyframes card-shrink-out {
+    0%   { opacity: 1; transform: scale(1) translateY(0); max-height: 200px; }
+    100% { opacity: 0; transform: scale(0.88) translateY(-8px); max-height: 0;
+           padding-top: 0; padding-bottom: 0; margin-bottom: 0; border-width: 0; }
+  }
+  .card.removing { animation: card-shrink-out 240ms ease-in both; pointer-events: none; overflow: hidden; }
+  /* v4: column slide-in from the right when a new column is added.
+     Slower + non-overshoot so it feels "established" vs cards which "pop". */
+  @keyframes column-slide-in {
+    0%   { opacity: 0; transform: translateX(48px); max-width: 0; padding-left: 0; padding-right: 0; }
+    100% { opacity: 1; transform: translateX(0);    max-width: 320px; padding-left: 8px; padding-right: 8px; }
+  }
+  .column.sliding-in { animation: column-slide-in 400ms cubic-bezier(0.16, 1, 0.3, 1) both; overflow: hidden; }
+  /* v4: accessibility — honor reduced-motion preference */
+  @media (prefers-reduced-motion: reduce) {
+    .card.popping-in, .card.removing, .card.pulsing, .column.sliding-in,
+    .card.flashing { animation: none !important; }
+  }
+  /* v2: live "↻ updated 12s ago" indicator in the header. Tick every 1s. */
+  header .last-update {
+    font-size: 11px; color: var(--muted);
+    margin-left: 8px; font-variant-numeric: tabular-nums;
+  }
+  /* Header pill (Tags button) — sits beside the view toggle */
+  header .header-pill {
+    font-size: 12px; padding: 5px 11px; border-radius: 999px;
+    background: var(--card-bg); color: var(--ink);
+    border: 1px solid var(--card-border);
+    cursor: pointer; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 5px;
+    transition: all .12s;
+  }
+  header .header-pill:hover { background: rgba(217,119,87,.10); border-color: var(--accent); }
+  header .header-pill.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+  header .header-pill #tags-count {
+    font-variant-numeric: tabular-nums;
+    font-size: 11px; color: var(--muted); font-weight: 600;
+  }
+  header .header-pill.active #tags-count { color: rgba(255,255,255,.65); }
+
+  /* Tag legend popover — anchored under the Tags button */
+  .tag-legend {
+    position: absolute; top: 52px; right: 14px;
+    z-index: 200;
+    width: min(360px, calc(100vw - 28px));
+    max-height: min(70vh, 480px); overflow-y: auto;
+    background: var(--card-bg); color: var(--ink);
+    border: 1px solid var(--card-border); border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(44,38,32,.18), 0 2px 6px rgba(44,38,32,.06);
+    padding: 12px 14px;
+    animation: tag-legend-pop 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes tag-legend-pop {
+    from { opacity: 0; transform: translateY(-6px) scale(.97); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .tag-legend-head {
+    display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+    margin-bottom: 10px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--card-border);
+  }
+  .tag-legend-head strong { font-size: 13px; }
+  .tag-legend-head .small { font-size: 10px; }
+  .tag-legend-head .muted { color: var(--muted); }
+  .tag-clear {
+    margin-left: auto;
+    font-size: 10px; padding: 3px 8px;
+    background: rgba(222,53,11,.08); color: var(--red);
+    border: 1px solid rgba(222,53,11,.20); border-radius: 999px;
+    cursor: pointer; font-weight: 600;
+  }
+  .tag-clear:hover { background: rgba(222,53,11,.18); }
+  /* 3-section legend: Main / Sub / Custom — with cap meters */
+  .tag-legend-section { margin-bottom: 12px; }
+  .tag-legend-section:last-child { margin-bottom: 0; }
+  .tag-legend-section-head {
+    display: flex; align-items: baseline; gap: 6px;
+    font-size: 10px; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .tag-legend-section-head .cap {
+    margin-left: auto;
+    font-size: 10px; font-weight: 600; color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    text-transform: none; letter-spacing: 0;
+  }
+  .tag-legend-section-head .cap.near { color: var(--amber); }
+  .tag-legend-section-head .cap.over { color: var(--red); }
+  .tag-legend-section-head .hint {
+    font-size: 10px; font-weight: 500; color: var(--muted);
+    text-transform: none; letter-spacing: 0; font-style: italic;
+  }
+  .tag-legend-list {
+    display: flex; flex-wrap: wrap; gap: 5px;
+  }
+  .tag-legend-list .tag-legend-chip {
+    --tag-c: #8b8680;
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; padding: 3px 9px 3px 8px; border-radius: 999px;
+    background: color-mix(in srgb, var(--tag-c) 12%, var(--card-bg));
+    color: color-mix(in srgb, var(--tag-c) 80%, #1d1916);
+    border: 1px solid color-mix(in srgb, var(--tag-c) 30%, transparent);
+    cursor: pointer; transition: all .12s;
+  }
+  .tag-legend-list .tag-legend-chip::before {
+    content: ''; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--tag-c);
+    flex-shrink: 0;
+  }
+  .tag-legend-list .tag-legend-chip:hover {
+    background: color-mix(in srgb, var(--tag-c) 22%, var(--card-bg));
+    border-color: color-mix(in srgb, var(--tag-c) 60%, transparent);
+  }
+  .tag-legend-list .tag-legend-chip.active {
+    background: var(--tag-c); color: #fff;
+    border-color: var(--tag-c);
+    padding-right: 6px;
+  }
+  .tag-legend-list .tag-legend-chip.active::before { background: rgba(255,255,255,.85); }
+  /* Visible ✕ on active chips — discoverable "click to remove" affordance. */
+  .tag-legend-list .tag-legend-chip.active::after {
+    content: '✕';
+    margin-left: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    color: rgba(255,255,255,.85);
+    width: 14px; height: 14px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 50%;
+    background: rgba(0,0,0,.18);
+    transition: background .12s, color .12s;
+  }
+  .tag-legend-list .tag-legend-chip.active:hover::after {
+    background: rgba(0,0,0,.32);
+    color: #fff;
+  }
+  .tag-legend-list .tag-legend-chip .count {
+    font-variant-numeric: tabular-nums;
+    font-size: 10px;
+    background: color-mix(in srgb, var(--tag-c) 8%, var(--bg));
+    color: color-mix(in srgb, var(--tag-c) 70%, var(--ink));
+    padding: 1px 6px; border-radius: 999px;
+    min-width: 16px; text-align: center;
+  }
+  .tag-legend-list .tag-legend-chip.unused {
+    opacity: .42; cursor: default;
+    background: var(--card-bg);
+  }
+  .tag-legend-list .tag-legend-chip.unused:hover { background: var(--card-bg); }
+  .tag-legend-list .tag-legend-chip.active .count {
+    color: var(--tag-c); background: #fff;
+  }
+  .tag-legend-empty {
+    font-size: 11px; color: var(--muted); font-style: italic;
+    padding: 4px 2px;
+  }
+  /* When a filter is active, hide non-matching cards entirely so columns
+     visibly compact — much more obvious than dimming. */
+  .card.dim-by-filter { display: none !important; }
+  /* Hint pill at top of each column showing "+ N hidden" when filter active */
+  .col-filtered-note {
+    font-size: 10px; padding: 4px 8px; margin: 0 8px 6px;
+    border-radius: 4px;
+    background: rgba(217,119,87,.10); color: var(--accent);
+    border: 1px dashed rgba(217,119,87,.30);
+    text-align: center; font-weight: 500;
+  }
+  header .last-update.stale { color: var(--amber); font-weight: 600; }
+  @keyframes live-pulse {
+    0%   { box-shadow: 0 0 0 0   rgba(90,159,122,.50); }
+    70%  { box-shadow: 0 0 0 8px rgba(90,159,122,0);   }
+    100% { box-shadow: 0 0 0 0   rgba(90,159,122,0);   }
+  }
+
+  #board {
+    display: flex;
+    gap: 8px;
+    padding: 12px;
+    overflow-x: auto;
+    height: calc(100% - 48px);
+    align-items: flex-start;
+  }
+  .column {
+    background: var(--col-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    width: 300px;
+    flex-shrink: 0;
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: 8px;
+  }
+  /* Boho per-column hue tints (hue family at ~2% off-white). */
+  .column[data-col="ideas"]      { background: var(--col-ideas); }
+  .column[data-col="backlog"]    { background: var(--col-backlog); }
+  .column[data-col="inprogress"] { background: var(--col-inprogress); }
+  .column[data-col="blocked"]    { background: var(--col-blocked); }
+  .column[data-col="done"]       { background: var(--col-done); }
+  .column.dragover { background: #F1E9DF; box-shadow: inset 0 0 0 2px var(--accent); }
+
+  /* Column drag-to-reorder + drag-to-trash (iPhone-rearrange feel).
+     `col-dragging` = the column being dragged (ghosted out of place).
+     `col-dragging-active` on body = a column is mid-drag (other columns
+     wobble subtly to signal "you can drop me here"). */
+  .column { transition: transform 320ms cubic-bezier(0.34, 1.4, 0.64, 1), opacity 200ms; }
+  .column.col-dragging { opacity: 0.4; }
+  body.col-dragging-active .column { cursor: grabbing; }
+  body.col-dragging-active .column:not(.col-dragging) {
+    animation: col-wiggle 0.6s ease-in-out infinite;
+  }
+  @keyframes col-wiggle {
+    0%, 100% { transform: rotate(0deg); }
+    25%      { transform: rotate(-0.45deg); }
+    75%      { transform: rotate(0.45deg); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .column { transition: none; }
+    body.col-dragging-active .column:not(.col-dragging) { animation: none; }
+  }
+  .column-header .grip {
+    cursor: grab; color: var(--muted); font-size: 14px; line-height: 1;
+    user-select: none; padding: 2px 4px; opacity: 0.5;
+    transition: opacity .15s, color .15s;
+  }
+  .column-header:hover .grip { opacity: 1; color: var(--ink); }
+  .column-header .grip:active { cursor: grabbing; }
+
+  /* Trash drop-zone (appears only while dragging a column). Boho-themed:
+     soft warm cream background, coral icon, gentle shadow, breathing glow. */
+  #col-trash {
+    position: fixed; bottom: 28px; right: 28px; z-index: 250;
+    width: 72px; height: 72px; border-radius: 50%;
+    background: linear-gradient(145deg, #FDFAF5 0%, #F9F2E8 100%);
+    color: var(--accent);
+    display: none; align-items: center; justify-content: center;
+    font-size: 30px; line-height: 1;
+    box-shadow: 0 8px 24px rgba(217,119,87,0.18),
+                0 2px 6px rgba(0,0,0,0.04),
+                inset 0 1px 0 rgba(255,255,255,0.7);
+    border: 1px solid rgba(217,119,87,0.18);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    transform: scale(0.6) translateY(20px); opacity: 0;
+    transition: transform 320ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                opacity 220ms, background 200ms, box-shadow 200ms,
+                color 150ms, border-color 200ms;
+    pointer-events: none; cursor: pointer;
+  }
+  body.col-dragging-active #col-trash {
+    display: flex;
+    transform: scale(1) translateY(0); opacity: 1; pointer-events: auto;
+    animation: trash-breathe 2.4s ease-in-out infinite;
+  }
+  @keyframes trash-breathe {
+    0%, 100% { box-shadow: 0 8px 24px rgba(217,119,87,0.18),
+                           0 2px 6px rgba(0,0,0,0.04),
+                           inset 0 1px 0 rgba(255,255,255,0.7); }
+    50%      { box-shadow: 0 10px 32px rgba(217,119,87,0.32),
+                           0 2px 6px rgba(0,0,0,0.04),
+                           inset 0 1px 0 rgba(255,255,255,0.7); }
+  }
+  #col-trash.over {
+    background: linear-gradient(145deg, #E08866 0%, #C96A4E 100%);
+    color: #fff;
+    transform: scale(1.18) translateY(-2px) rotate(-6deg);
+    border-color: rgba(255,255,255,0.4);
+    box-shadow: 0 14px 36px rgba(217,119,87,0.45),
+                0 4px 10px rgba(0,0,0,0.08),
+                inset 0 1px 0 rgba(255,255,255,0.35);
+    animation: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    body.col-dragging-active #col-trash { animation: none; }
+    #col-trash { transition: opacity 150ms; }
+  }
+
+  /* Mini-confirm dialog — boho card, blurred overlay. */
+  #mini-confirm-overlay {
+    position: fixed; inset: 0; z-index: 400;
+    background: rgba(45,40,38,0.32);
+    backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+    display: none; align-items: center; justify-content: center;
+    animation: mc-fadein 160ms ease-out;
+  }
+  #mini-confirm-overlay.show { display: flex; }
+  @keyframes mc-fadein { from { opacity: 0; } to { opacity: 1; } }
+  .mini-confirm-card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+    padding: 20px 22px 16px;
+    min-width: 260px; max-width: 380px;
+    box-shadow: 0 24px 60px rgba(45,40,38,0.18),
+                0 4px 14px rgba(0,0,0,0.05);
+    animation: mc-popin 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  @keyframes mc-popin {
+    from { opacity: 0; transform: scale(0.86) translateY(8px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  .mini-confirm-card .mc-msg {
+    font-size: 15px; font-weight: 600; color: var(--ink);
+    margin-bottom: 14px; text-align: center;
+  }
+  .mini-confirm-card .mc-sub {
+    font-size: 12px; color: var(--muted);
+    margin-top: -8px; margin-bottom: 14px; text-align: center;
+  }
+  .mini-confirm-card .mc-actions {
+    display: flex; gap: 8px; justify-content: center;
+  }
+  .mini-confirm-card .mc-btn {
+    border: 1px solid var(--card-border); background: var(--card-bg);
+    color: var(--ink); padding: 7px 18px; border-radius: 8px;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    transition: background .12s, border-color .12s, color .12s, transform .08s;
+  }
+  .mini-confirm-card .mc-btn:hover { background: rgba(9,30,66,.05); }
+  .mini-confirm-card .mc-btn:active { transform: scale(0.97); }
+  .mini-confirm-card .mc-btn.primary {
+    background: var(--accent); color: #fff; border-color: var(--accent);
+  }
+  .mini-confirm-card .mc-btn.primary:hover {
+    background: #C96A4E; border-color: #C96A4E;
+  }
+  .mini-confirm-card .mc-btn.danger {
+    background: #D97757; color: #fff; border-color: #D97757;
+  }
+  .mini-confirm-card .mc-btn.danger:hover {
+    background: #C96A4E; border-color: #C96A4E;
+  }
+  .column-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 6px 8px;
+    font-size: 14px; font-weight: 600; color: var(--col-header);
+  }
+  .column-header .name { flex: 1; outline: none; cursor: text; padding: 2px 4px; border-radius: 3px; }
+  .column-header .name:focus { background: #fff; }
+  .column-header .count {
+    background: var(--neutral); color: var(--col-header);
+    font-size: 11px; padding: 2px 6px; border-radius: 10px; font-weight: 600;
+  }
+  .column-body { overflow-y: auto; flex: 1; min-height: 30px; padding: 2px; }
+  .add-card-btn {
+    width: 100%; text-align: left; padding: 6px 8px; margin-top: 6px;
+    background: transparent; border: 0; color: var(--muted); cursor: pointer;
+    border-radius: 4px; font-size: 13px;
+  }
+  .add-card-btn:hover { background: rgba(9,30,66,.08); color: var(--ink); }
+
+  /* ============= COMPACT CARD (home view) ============= */
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    padding: 10px 12px 10px 12px;
+    margin-bottom: 8px;
+    box-shadow: var(--shadow);
+    cursor: pointer;
+    position: relative;
+    transition: box-shadow .18s ease, transform .18s ease, border-color .18s ease;
+  }
+  .card:hover {
+    box-shadow: var(--shadow-hover);
+    transform: translateY(-1px);
+    border-color: #c1c7d0;
+  }
+  .card:active { transform: translateY(0); }
+  .card.dragging { opacity: .45; transform: rotate(1.5deg); }
+  /* Boho: columns carry the hue tint; cards stay pure white for contrast. */
+
+  /* Priority left-border */
+  .card.prio-critical { border-left: 4px solid var(--red); padding-left: 9px; }
+  .card.prio-mid      { border-left: 4px solid var(--amber); padding-left: 9px; }
+  .card.prio-low      { border-left: 4px solid #b3b9c4; padding-left: 9px; }
+
+  /* Compact card head: one tight row */
+  .card-head {
+    display: flex; align-items: center; gap: 5px; margin-bottom: 4px;
+    font-size: 11px;
+  }
+  .prio-chip {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; border-radius: 50%;
+    font-size: 9px; font-weight: 700; color: #fff;
+    cursor: pointer; user-select: none; flex-shrink: 0;
+    background: #c1c7d0; border: 0; line-height: 1;
+  }
+  .prio-chip.critical { background: var(--red); }
+  .prio-chip.mid      { background: var(--amber); }
+  .prio-chip.low      { background: #6b778c; }
+  .prio-chip:hover { transform: scale(1.15); }
+  .prio-chip.unset::before { content: "·"; font-size: 14px; }
+  .prio-chip.critical::before { content: "C"; }
+  .prio-chip.mid::before { content: "M"; }
+  .prio-chip.low::before { content: "L"; }
+
+  .num-ref {
+    font-size: 11px; color: var(--muted); font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0; padding: 0 2px;
+    cursor: pointer; user-select: none;
+    border-radius: 3px;
+  }
+  .num-ref::before { content: "#"; opacity: .55; }
+  .num-ref:hover { background: rgba(9,30,66,.08); }
+
+  .badge {
+    font-size: 9px; font-weight: 700; letter-spacing: .04em;
+    padding: 1px 5px; border-radius: 3px;
+    background: var(--accent); color: #fff;
+    white-space: nowrap; flex-shrink: 0; line-height: 1.5;
+  }
+  .card[data-col="done"] .badge { background: var(--green); }
+  .card[data-col="blocked"] .badge { background: var(--amber); }
+  .card[data-col="ideas"] .badge { background: var(--purple); }
+
+  .card-title {
+    font-size: 13px; font-weight: 500; line-height: 1.35;
+    word-wrap: break-word; color: var(--ink);
+  }
+  .card[data-col="done"] .card-title { text-decoration: line-through; opacity: .8; }
+
+  .card-tags { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+  /* Tag chip — color comes from JS via --tag-c (per-tag from taxonomy or
+     deterministic hash). Light tinted bg + dotted swatch keeps the surface
+     calm; uniform shape across the board. */
+  .card-tags .tag {
+    font-size: 9px; padding: 1px 6px 1px 5px;
+    border-radius: 8px; line-height: 1.4;
+    background: color-mix(in srgb, var(--tag-c, #8b8680) 14%, transparent);
+    color: color-mix(in srgb, var(--tag-c, #8b8680) 75%, #1d1916);
+    border: 1px solid color-mix(in srgb, var(--tag-c, #8b8680) 32%, transparent);
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  .card-tags .tag::before {
+    content: ''; width: 5px; height: 5px; border-radius: 50%;
+    background: var(--tag-c, #8b8680);
+    flex-shrink: 0;
+  }
+
+  .card-progress {
+    display: flex; align-items: center; gap: 5px;
+    margin-top: 5px; font-size: 10px; color: var(--muted);
+  }
+  .card-progress .bar { flex: 1; height: 3px; background: #dfe1e6; border-radius: 2px; overflow: hidden; }
+  .card-progress .bar > div { height: 100%; background: var(--accent); }
+  .card[data-col="done"] .card-progress .bar > div { background: var(--green); }
+
+  .expand-hint {
+    position: absolute; top: 6px; right: 6px;
+    font-size: 9px; font-weight: 700; letter-spacing: .06em;
+    color: var(--accent); opacity: 0;
+    background: rgba(0,121,191,.10);
+    padding: 2px 7px; border-radius: 10px;
+    transition: opacity .15s ease, transform .15s ease;
+    pointer-events: none;
+    text-transform: uppercase;
+    transform: translateY(-2px);
+  }
+  .card:hover .expand-hint { opacity: 1; transform: translateY(0); }
+
+  /* ============= MODAL (expanded card detail) ============= */
+  @keyframes overlay-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes modal-in {
+    from { opacity: 0; transform: translateY(8px) scale(.985); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(9,30,66,.55);
+    backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+    display: none; align-items: flex-start; justify-content: center;
+    z-index: 200; padding: 48px 20px 60px; overflow-y: auto;
+  }
+  .modal-overlay.open { display: flex; animation: overlay-in .14s ease-out; }
+  .modal {
+    background: #fff; border-radius: 10px; padding: 28px 32px 22px;
+    width: min(760px, 100%); box-shadow: 0 24px 48px rgba(0,0,0,.32), 0 2px 8px rgba(0,0,0,.12);
+    position: relative; margin: auto;
+    animation: modal-in .18s cubic-bezier(.2,.9,.3,1);
+  }
+  .modal-close {
+    position: absolute; top: 10px; right: 10px;
+    background: transparent; border: 0; font-size: 22px; cursor: pointer;
+    color: var(--muted); padding: 4px 10px; border-radius: 4px;
+    line-height: 1;
+  }
+  .modal-close:hover { background: rgba(9,30,66,.10); color: var(--ink); }
+
+  .modal-head {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+    padding-right: 36px; /* keep clear of close button */
+  }
+  .modal-head .badge { font-size: 10px; padding: 2px 6px; }
+  .modal-head .badge[contenteditable="true"]:focus { background: #fff; color: var(--ink); border: 1px solid var(--accent); padding: 1px 5px; outline: none; }
+  .modal-title {
+    font-size: 22px; font-weight: 600; outline: none;
+    padding: 6px 8px; border-radius: 6px; margin: 8px -8px 16px;
+    word-wrap: break-word; line-height: 1.28;
+    transition: background .12s;
+  }
+  .modal-title:hover { background: #f9fafb; }
+  .modal-title:focus { background: #f4f5f7; box-shadow: inset 0 0 0 2px rgba(0,121,191,.25); }
+  .modal-meta {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+    margin: 0 0 6px; font-size: 12px; color: var(--muted);
+  }
+  .modal-meta label { font-weight: 600; }
+  .modal-meta select {
+    font-size: 12px; padding: 4px 8px; border: 1px solid var(--card-border);
+    background: #fff; border-radius: 4px; color: var(--ink);
+    transition: border-color .12s;
+  }
+  .modal-meta select:hover { border-color: #b3b9c4; }
+  .modal-meta select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(0,121,191,.2); }
+  .modal-section-label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--muted); margin-top: 20px; margin-bottom: 8px; font-weight: 700;
+    padding-bottom: 6px; border-bottom: 1px solid #ebecf0;
+    display: flex; align-items: center; gap: 4px;
+  }
+
+  /* Info icon — visual only; tooltip is JS-managed (body-level, escapes overflow:hidden) */
+  .tip-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 14px; height: 14px;
+    border-radius: 50%; background: rgba(9,30,66,.10); color: var(--muted);
+    font-size: 10px; font-weight: 700; cursor: help;
+    font-style: italic; line-height: 1;
+    text-transform: none; letter-spacing: 0;
+    transition: background .12s, color .12s, transform .12s;
+    font-family: Georgia, serif;
+    flex-shrink: 0;
+  }
+  .tip-icon:hover { background: var(--accent); color: #fff; transform: scale(1.15); }
+
+  /* Body-level JS tooltip (escapes column overflow) */
+  .qm-tooltip {
+    position: fixed; z-index: 9999;
+    background: var(--ink); color: #fff;
+    padding: 10px 14px; border-radius: 6px;
+    font-size: 11px; font-weight: 400; line-height: 1.5;
+    max-width: 360px; white-space: pre-wrap;
+    box-shadow: 0 6px 24px rgba(0,0,0,.32);
+    pointer-events: none; opacity: 0;
+    transition: opacity .12s ease;
+    left: -9999px; top: 0;
+  }
+  .qm-tooltip.show { opacity: 1; }
+
+  /* Relative time — inline in head row, right-aligned to save height */
+  .card-time {
+    margin-left: auto;
+    font-size: 10px; color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    cursor: help; flex-shrink: 0; white-space: nowrap;
+    padding-left: 4px;
+  }
+
+  /* Linked-card chips inside the modal */
+  .links-edit { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .link-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 8px 3px 8px; border-radius: 10px;
+    background: rgba(0,121,191,.10); color: var(--accent);
+    font-size: 11px; font-weight: 600;
+    cursor: pointer; user-select: none;
+    border: 1px solid rgba(0,121,191,.20);
+    transition: background .12s;
+  }
+  .link-chip:hover { background: rgba(0,121,191,.20); }
+  .link-chip .link-title { color: var(--muted); font-weight: 400; }
+  .link-chip.link-done { background: rgba(54,179,126,.10); color: var(--green); border-color: rgba(54,179,126,.25); }
+  .link-chip.link-done .link-title { text-decoration: line-through; }
+  .link-chip.link-prio-critical { box-shadow: inset 3px 0 0 0 var(--red); padding-left: 9px; }
+  .link-chip.link-prio-mid      { box-shadow: inset 3px 0 0 0 var(--amber); padding-left: 9px; }
+  .link-chip.link-prio-low      { box-shadow: inset 3px 0 0 0 #b3b9c4; padding-left: 9px; }
+  .link-chip .link-remove {
+    margin-left: 2px; opacity: 0; transition: opacity .12s;
+    font-size: 13px; line-height: 1; padding: 0 2px; cursor: pointer;
+    color: var(--muted);
+  }
+  .link-chip:hover .link-remove { opacity: 1; }
+  .link-chip .link-remove:hover { color: var(--red); }
+  .link-chip.orphan { background: #f0f0f3; color: var(--muted); border-color: var(--card-border); font-weight: 400; }
+
+  /* Day-header rows in the Done column (group by doneAt date) */
+  .day-header {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--col-header);
+    padding: 8px 6px 4px; margin-top: 4px;
+    border-top: 1px solid rgba(94,108,132,.18);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .day-header:first-child { border-top: 0; margin-top: 0; padding-top: 2px; }
+  .day-header .day-count {
+    background: #dfe1e6; color: var(--col-header);
+    font-size: 9px; padding: 1px 6px; border-radius: 8px;
+    font-weight: 600; letter-spacing: 0;
+  }
+
+  /* ============= VIEW TOGGLE + CALENDAR ============= */
+  .view-toggle {
+    display: inline-flex; background: rgba(217,119,87,.06);
+    border: 1px solid var(--card-border);
+    border-radius: 6px; padding: 2px; margin-right: 8px;
+  }
+  .view-toggle button {
+    background: transparent; border: 0; padding: 4px 12px;
+    color: var(--muted); font-size: 12px; font-weight: 600;
+    cursor: pointer; border-radius: 4px;
+    transition: background .12s, color .12s;
+  }
+  .view-toggle button.active {
+    background: var(--card-bg); color: var(--ink);
+    box-shadow: 0 1px 2px rgba(44,38,32,.08);
+  }
+
+  /* ===== Calendar v2 — calmer, more breathing room, summary + filter ===== */
+  #calendar {
+    display: none;
+    height: calc(100% - 48px);
+    padding: 20px 28px 24px;
+    background: var(--bg);
+    color: var(--ink);
+    flex-direction: column;
+    overflow: hidden;
+    gap: 14px;
+  }
+  /* Top strip: month nav + month-at-a-glance counters */
+  .cal-topbar {
+    display: flex; align-items: center; gap: 14px;
+    flex-shrink: 0;
+  }
+  .cal-topbar h2 {
+    margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -.01em;
+    min-width: 220px;
+  }
+  .cal-nav { display: flex; gap: 4px; }
+  .cal-nav button {
+    background: transparent; color: var(--muted);
+    border: 1px solid transparent;
+    width: 30px; height: 30px; border-radius: 6px;
+    cursor: pointer; font-size: 14px;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: all .12s;
+  }
+  .cal-nav button:hover { background: var(--card-bg); border-color: var(--card-border); color: var(--ink); }
+  .cal-nav .cal-today-btn {
+    width: auto; padding: 0 12px; font-size: 12px; font-weight: 500;
+    color: var(--ink); border: 1px solid var(--card-border); background: var(--card-bg);
+  }
+  .cal-summary {
+    display: flex; gap: 6px; margin-left: auto;
+    font-size: 12px; color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .cal-summary .stat {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 11px; border-radius: 999px;
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer; transition: all .12s;
+  }
+  .cal-summary .stat:hover {
+    background: var(--card-bg);
+    border-color: var(--card-border);
+  }
+  .cal-summary .stat.active {
+    background: var(--card-bg);
+    border-color: var(--ink);
+    color: var(--ink);
+  }
+  .cal-summary .stat-num { font-size: 14px; font-weight: 700; color: var(--ink); }
+  .cal-summary .stat.shipped .stat-num { color: var(--green); }
+  .cal-summary .stat.created .stat-num { color: var(--accent); }
+  .cal-summary .stat.open .stat-num    { color: var(--amber); }
+
+  /* Filter chip row: empty by default, click to filter */
+  .cal-filters {
+    display: flex; gap: 6px; align-items: center;
+    flex-shrink: 0; flex-wrap: wrap;
+  }
+  .cal-filter-chip {
+    font-size: 11px; padding: 4px 10px; border-radius: 999px;
+    border: 1px solid var(--card-border); background: var(--card-bg);
+    cursor: pointer; color: var(--muted); font-weight: 500;
+    transition: all .12s;
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .cal-filter-chip:hover { color: var(--ink); border-color: var(--muted); }
+  .cal-filter-chip.active {
+    background: var(--ink); color: #fff; border-color: var(--ink);
+  }
+  .cal-filter-chip .swatch {
+    display: inline-block; width: 8px; height: 8px;
+    border-radius: 2px;
+  }
+  .cal-filter-chip[data-f="done"] .swatch     { background: var(--green); }
+  .cal-filter-chip[data-f="open"] .swatch     { background: var(--amber); }
+  .cal-filter-chip[data-f="critical"] .swatch { background: var(--red); }
+  .cal-filter-chip[data-f="mid"] .swatch      { background: var(--amber); }
+  .cal-filter-chip[data-f="low"] .swatch      { background: #b3b9c4; }
+
+  /* Grid itself — flat, lighter borders, more vertical room */
+  .cal-grid {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    flex: 1;
+    display: grid; grid-template-rows: auto 1fr;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(44,38,32,.04);
+  }
+  .cal-dow {
+    display: grid; grid-template-columns: repeat(7, 1fr);
+    border-bottom: 1px solid var(--card-border);
+  }
+  .cal-dow .dow {
+    padding: 10px 12px; font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .1em; color: var(--muted);
+    text-align: left;
+  }
+  /* Weekend tint to add subtle structure */
+  .cal-dow .dow.weekend { color: #b3b9c4; }
+  .cal-weeks {
+    display: grid; grid-auto-rows: 1fr;
+    overflow-y: auto;
+  }
+  .cal-week {
+    display: grid; grid-template-columns: repeat(7, 1fr);
+    position: relative;
+    border-bottom: 1px solid var(--card-border);
+    min-height: 96px;
+  }
+  .cal-week:last-child { border-bottom: 0; }
+  .cal-day {
+    border-right: 1px solid var(--card-border);
+    padding: 8px 8px 6px;
+    position: relative; min-width: 0;
+    transition: background .15s;
+    cursor: default;
+  }
+  .cal-day:hover { background: rgba(217,119,87,.04); }
+  .cal-day.muted { background: rgba(0,0,0,.015); }
+  .cal-day.muted:hover { background: rgba(0,0,0,.025); }
+  .cal-day:last-child { border-right: 0; }
+  .cal-day.today { background: rgba(217,119,87,.06); }
+  .cal-day.today:hover { background: rgba(217,119,87,.10); }
+  .cal-day.today .cal-daynum {
+    background: var(--accent); color: #fff;
+    border-radius: 50%; width: 24px; height: 24px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-weight: 700;
+  }
+  .cal-daynum {
+    font-size: 12px; color: var(--ink); font-weight: 600;
+    margin-bottom: 4px;
+    display: inline-flex; align-items: center;
+    width: 24px; height: 24px;
+  }
+  .cal-day.muted .cal-daynum { color: #cfd2d6; font-weight: 400; }
+
+  /* Compact dots when there are >3 cards — reduces "stuffed" feel */
+  .cal-events {
+    display: flex; flex-direction: column; gap: 3px;
+    margin-top: 2px;
+  }
+  .cal-event-chip {
+    display: flex; align-items: center; gap: 6px;
+    padding: 3px 7px 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    background: rgba(0,121,191,.06);
+    color: var(--ink);
+    border-left: 3px solid var(--accent);
+    overflow: hidden;
+    transition: all .12s;
+    line-height: 1.3;
+  }
+  .cal-event-chip:hover {
+    background: rgba(0,121,191,.14);
+    transform: translateX(1px);
+  }
+  .cal-event-chip.done {
+    background: rgba(90,159,122,.10);
+    border-left-color: var(--green);
+  }
+  .cal-event-chip.done .event-text { opacity: .82; text-decoration: none; }
+  .cal-event-chip.prio-critical { border-left-color: var(--red);   background: rgba(222,53,11,.06); }
+  .cal-event-chip.prio-mid      { border-left-color: var(--amber); background: rgba(255,153,31,.07); }
+  .cal-event-chip.prio-low      { border-left-color: #b3b9c4;      background: rgba(101,108,124,.06); }
+  /* Dimmed when tag filter active and chip doesn't match */
+  .cal-event-chip.dim { opacity: .22; }
+  .event-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent); flex-shrink: 0;
+  }
+  .cal-event-chip.done .event-dot { background: var(--green); }
+  .cal-event-chip.prio-critical .event-dot { background: var(--red); }
+  .cal-event-chip.prio-mid      .event-dot { background: var(--amber); }
+  .cal-event-chip.prio-low      .event-dot { background: #6b778c; }
+  .event-text {
+    flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-weight: 500;
+  }
+  .event-text .ev-num {
+    color: var(--muted); font-weight: 700; margin-right: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+  .cal-event-chip.done .ev-num { color: var(--green); }
+  .cal-more {
+    font-size: 9px; color: var(--muted);
+    padding: 1px 6px; font-weight: 600;
+  }
+
+  textarea.origin-modal {
+    width: 100%; resize: vertical; min-height: 64px;
+    border: 1px solid var(--card-border);
+    background: rgba(135,119,217,.06);
+    color: var(--ink);
+    border-radius: 4px; padding: 8px 10px; font-family: inherit; font-size: 13px;
+    outline: none; line-height: 1.5;
+  }
+  textarea.origin-modal:focus { border-color: var(--purple); background: #fff; }
+  textarea.origin-modal::placeholder { color: var(--muted); font-style: italic; }
+
+  /* Tags editor in modal */
+  .tags-edit { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .tags-edit .tag {
+    font-size: 11px; padding: 3px 8px; cursor: pointer; user-select: none;
+  }
+  .tags-edit .tag:hover { opacity: .75; }
+  .tag-input {
+    font-size: 11px; padding: 3px 8px; border: 1px dashed var(--card-border);
+    background: transparent; border-radius: 10px; outline: none; width: 110px;
+    color: var(--ink);
+  }
+  .tag-input:focus { border-style: solid; border-color: var(--accent); }
+
+  /* Subtask tree in modal */
+  .subtasks { margin: 4px 0; }
+  .subtask { display: block; padding: 0; font-size: 13px; }
+  .subtask > .row { display: flex; align-items: flex-start; gap: 5px; padding: 1px 0; }
+  .subtask .toggle {
+    width: 14px; flex-shrink: 0; cursor: pointer; color: var(--muted);
+    background: transparent; border: 0; padding: 0; line-height: 1; font-size: 10px; text-align: center;
+  }
+  .subtask.has-children > .row > .toggle::before { content: "▾"; }
+  .subtask.has-children.collapsed > .row > .toggle::before { content: "▸"; }
+  .subtask:not(.has-children) > .row > .toggle::before { content: ""; }
+  .subtask input[type="checkbox"] { margin: 3px 0 0; flex-shrink: 0; cursor: pointer; }
+  .subtask .num {
+    font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums;
+    flex-shrink: 0; padding-top: 2px; min-width: 22px;
+  }
+  .subtask .text {
+    flex: 1; outline: none; padding: 1px 3px; border-radius: 3px;
+    word-wrap: break-word; min-width: 0;
+  }
+  .subtask .text:focus { background: #f4f5f7; }
+  .subtask.done > .row > .text { text-decoration: line-through; color: var(--muted); }
+  .subtask .st-actions { display: flex; gap: 0; opacity: 0; transition: opacity .15s; flex-shrink: 0; }
+  .subtask:hover > .row > .st-actions { opacity: 1; }
+  .subtask .children { margin-left: 18px; }
+  .subtask.collapsed > .children { display: none; }
+  .add-subtask {
+    background: transparent; border: 0; color: var(--muted); cursor: pointer;
+    font-size: 12px; padding: 3px 0; margin-left: 18px;
+  }
+  .add-subtask:hover { color: var(--ink); }
+  .icon-btn {
+    background: transparent; border: 0; cursor: pointer; padding: 2px 4px;
+    border-radius: 3px; color: var(--muted); font-size: 14px; line-height: 1;
+  }
+  .icon-btn:hover { background: rgba(9,30,66,.10); color: var(--ink); }
+  .del-btn:hover { color: var(--red); }
+
+  /* Textareas */
+  textarea.notes-modal, textarea.writeup-modal {
+    width: 100%; resize: vertical; min-height: 80px;
+    border: 1px solid var(--card-border); background: #fff; color: var(--ink);
+    border-radius: 4px; padding: 8px 10px; font-family: inherit; font-size: 13px;
+    outline: none; line-height: 1.45;
+  }
+  textarea.notes-modal:focus, textarea.writeup-modal:focus { border-color: var(--accent); }
+  textarea.writeup-modal { background: rgba(54,179,126,.06); }
+  .writeup-missing-flag { font-size: 11px; color: var(--red); margin-top: 4px; }
+
+  .modal-foot {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--card-border);
+    font-size: 11px; color: var(--muted);
+  }
+  .modal-delete {
+    background: transparent; border: 1px solid var(--card-border); color: var(--red);
+    padding: 5px 12px; border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: 600;
+  }
+  .modal-delete:hover { background: var(--red); color: #fff; border-color: var(--red); }
+
+  .toast {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    background: var(--ink); color: #fff; padding: 8px 16px; border-radius: 6px;
+    font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,.3);
+    opacity: 0; transition: opacity .2s;
+    pointer-events: none; z-index: 300;
+  }
+  .toast.show { opacity: 1; }
+
+  /* Setup screen */
+  .setup {
+    position: absolute; inset: 48px 0 0 0;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ink); flex-direction: column; gap: 16px; padding: 0 20px;
+  }
+  .setup h2 { margin: 0; font-weight: 500; }
+  .setup p { max-width: 480px; text-align: center; color: var(--muted); }
+  .setup button {
+    background: var(--accent); color: #fff; border: 0; padding: 10px 20px;
+    border-radius: 6px; font-size: 14px; cursor: pointer; font-weight: 600;
+  }
+  .setup .err { color: var(--red); font-size: 12px; min-height: 1em; }
+  .setup .small { font-size: 12px; color: var(--muted); }
+  .setup code { background: var(--neutral); color: var(--ink); padding: 1px 6px; border-radius: 3px; }
+
+  .col-add-btn {
+    background: var(--card-bg); color: var(--ink);
+    border: 1px dashed var(--card-border);
+    padding: 8px 12px; border-radius: 8px; cursor: pointer;
+    height: 36px; flex-shrink: 0; align-self: flex-start; font-size: 13px;
+    white-space: nowrap;
+  }
+  .col-add-btn:hover { background: rgba(217,119,87,.06); border-style: solid; border-color: var(--accent); color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="title-wrap">
+    <h1 id="board-title" title="Click to go to Board · double-click to rename">Work Board</h1>
+    <span class="status" id="status" title="Connection status"><span class="dot"></span></span>
+  </span>
+  <span class="sp"></span>
+  <button id="tags-btn" class="header-pill" style="display:none" title="Show all tags used on this board">🏷 Tags <span id="tags-count">0</span></button>
+  <span class="view-toggle" id="view-toggle" style="display:none">
+    <button data-view="board" class="active">Board</button>
+    <button data-view="calendar">Calendar</button>
+  </span>
+</header>
+
+<!-- Tag legend popover (anchored under #tags-btn) -->
+<div id="tag-legend" class="tag-legend" style="display:none">
+  <div class="tag-legend-head">
+    <strong>Tags</strong>
+    <span class="muted small" id="tag-profile-label">software</span>
+    <button id="tag-clear" class="tag-clear" style="display:none">Clear filter ✕</button>
+  </div>
+  <div id="tag-legend-body"></div>
+</div>
+
+<div id="board" style="display:none"></div>
+<div id="calendar"></div>
+
+<div class="modal-overlay" id="modal-overlay"></div>
+
+<div id="setup" class="setup">
+  <h2>Connecting to board server…</h2>
+  <p class="small">Fetching <code>board.json</code> from <code id="setup-url"></code>. If this hangs, make sure <code>board-steward serve</code> is running.</p>
+  <div class="err" id="setup-err"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div id="col-trash" title="Drop column here to delete">🗑</div>
+<div id="mini-confirm-overlay">
+  <div class="mini-confirm-card">
+    <div class="mc-msg">Confirm?</div>
+    <div class="mc-sub" id="mc-sub" style="display:none"></div>
+    <div class="mc-actions">
+      <button class="mc-btn" id="mc-cancel">Cancel</button>
+      <button class="mc-btn danger" id="mc-ok">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ===== State =====
+// v3: board.json is read/written via HTTP fetch to the local board-steward server
+// (same origin). No File System Access API, no IndexedDB. Works in any browser.
+const BOARD_URL = '/board.json';
+let state = null;
+let lastRev = 0;
+let saveTimer = null;
+let suppressPollUntil = 0;
+let pollTimer = null;
+let pendingDirty = false;
+let _openCardId = null;        // currently-open modal card
+// v2: track per-card {updatedAt|column} between polls so we can flash changed cards.
+let _prevSnapshot = new Map(); // id → "updatedAt|column" from previous render
+let _flashIds = new Set();     // ids to flash on the upcoming render
+let _colDragRects = null;      // id → DOMRect at dragstart (for FLIP)
+
+// Capture all column bounding rects (FLIP "first" step).
+function captureColumnRects() {
+  const map = new Map();
+  document.querySelectorAll('#board .column').forEach(c => {
+    map.set(c.dataset.col, c.getBoundingClientRect());
+  });
+  return map;
+}
+
+// FLIP "last/invert/play": after a re-render, animate each column from
+// where it WAS (in oldRects) to where it IS (current rect).
+function flipPlayColumns(oldRects) {
+  if (!oldRects) return;
+  document.querySelectorAll('#board .column').forEach(c => {
+    const id = c.dataset.col;
+    const oldR = oldRects.get(id);
+    if (!oldR) return;
+    const newR = c.getBoundingClientRect();
+    const dx = oldR.left - newR.left;
+    const dy = oldR.top  - newR.top;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+    c.animate(
+      [
+        { transform: `translate(${dx}px, ${dy}px)` },
+        { transform: 'translate(0, 0)' },
+      ],
+      { duration: 360, easing: 'cubic-bezier(0.34, 1.4, 0.64, 1)' }
+    );
+  });
+}
+
+function reorderColumn(srcId, targetId) {
+  if (!state) return;
+  const cols = state.columns;
+  const si = cols.findIndex(c => c.id === srcId);
+  const ti = cols.findIndex(c => c.id === targetId);
+  if (si < 0 || ti < 0 || si === ti) return;
+  pushUndo();
+  const old = _colDragRects;       // captured at dragstart
+  const [moved] = cols.splice(si, 1);
+  cols.splice(ti, 0, moved);
+  scheduleSave();
+  render();
+  requestAnimationFrame(() => flipPlayColumns(old));
+}
+
+function deleteColumn(id) {
+  if (!state) return;
+  const col = state.columns.find(c => c.id === id);
+  if (!col) return;
+  pushUndo();
+  // Reassign cards in this column → 'backlog' (don't orphan them in state).
+  let moved = 0;
+  state.cards.forEach(c => {
+    if (c.column === id) { c.column = 'backlog'; c.updatedAt = now(); moved++; }
+  });
+  state.columns = state.columns.filter(c => c.id !== id);
+  scheduleSave(); render();
+  toast(moved > 0
+    ? `Column "${col.name}" deleted · ${moved} card(s) → Backlog`
+    : `Column "${col.name}" deleted`);
+}
+
+const $ = s => document.querySelector(s);
+const now = () => new Date().toISOString();
+const uid = (p='c') => p + '-' + Math.random().toString(36).slice(2,9);
+
+function fmtTime(s) {
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const d = new Date(s);
+  if (isNaN(d)) return s;
+  const yr = d.getFullYear();
+  const mo = String(d.getMonth()+1).padStart(2,'0');
+  const dy = String(d.getDate()).padStart(2,'0');
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mm = String(d.getMinutes()).padStart(2,'0');
+  return `${yr}-${mo}-${dy} ${hh}:${mm}`;
+}
+
+// Local-frame YYYY-MM-DD (NOT toISOString — that's UTC and breaks day comparison
+// for non-UTC timezones, e.g. SGT at 11am local = previous day in UTC).
+function localYmd(d) {
+  if (!(d instanceof Date)) d = new Date(d);
+  if (isNaN(d)) return '';
+  const yr = d.getFullYear();
+  const mo = String(d.getMonth()+1).padStart(2,'0');
+  const dy = String(d.getDate()).padStart(2,'0');
+  return `${yr}-${mo}-${dy}`;
+}
+
+// Human-friendly relative time: "3d ago", "2h ago", "just now"
+function relativeTime(s) {
+  if (!s) return '';
+  const d = new Date(s);
+  if (isNaN(d)) return s;
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 45) return 'just now';
+  if (diff < 3600)   return Math.floor(diff/60)    + 'm ago';
+  if (diff < 86400)  return Math.floor(diff/3600)  + 'h ago';
+  const days = Math.floor(diff/86400);
+  if (days === 1) return 'yesterday';
+  if (days < 30)  return days + 'd ago';
+  if (days < 365) return Math.floor(days/30) + 'mo ago';
+  return Math.floor(days/365) + 'y ago';
+}
+
+// ===== JS tooltip (body-level — escapes overflow:hidden ancestors) =====
+let _tooltipEl = null;
+function ensureTooltipEl() {
+  if (_tooltipEl) return _tooltipEl;
+  _tooltipEl = document.createElement('div');
+  _tooltipEl.className = 'qm-tooltip';
+  document.body.appendChild(_tooltipEl);
+  return _tooltipEl;
+}
+function showTooltip(target, text) {
+  if (!text) return;
+  const tip = ensureTooltipEl();
+  tip.textContent = text;
+  tip.style.left = '-9999px';
+  tip.style.top  = '0px';
+  tip.classList.add('show');
+  // Force layout then measure
+  const r  = target.getBoundingClientRect();
+  const tr = tip.getBoundingClientRect();
+  const M = 8;
+  // Prefer below the target; flip above if not enough room
+  let top = r.bottom + M;
+  if (top + tr.height > window.innerHeight - M) {
+    top = Math.max(M, r.top - tr.height - M);
+  }
+  let left = r.left + r.width / 2 - tr.width / 2;
+  left = Math.max(M, Math.min(left, window.innerWidth - tr.width - M));
+  tip.style.left = left + 'px';
+  tip.style.top  = top  + 'px';
+}
+function hideTooltip() {
+  if (_tooltipEl) _tooltipEl.classList.remove('show');
+}
+// v2: diff state.cards vs previous snapshot. Mark ids whose updatedAt or column
+// changed since the last call (or that are new) for a one-shot flash on render.
+// First call (prev empty) seeds the snapshot without flashing anything.
+function detectChangesAndSnapshot() {
+  const flash = new Set();
+  const next = new Map();
+  const cards = (state && state.cards) || [];
+  const seeding = _prevSnapshot.size === 0;
+  for (const c of cards) {
+    const k = (c.updatedAt || '') + '|' + (c.column || '');
+    next.set(c.id, k);
+    if (!seeding) {
+      const prev = _prevSnapshot.get(c.id);
+      if (prev === undefined || prev !== k) flash.add(c.id);
+    }
+  }
+  _flashIds = flash;
+  _prevSnapshot = next;
+}
+
+// v2: live header "↻ updated Xs ago" — ticks every 1s. Stale (>5min) → amber.
+function tickLastUpdate() {
+  const el = $('#last-update');
+  if (!el) return;
+  if (!state || !state.savedAt) { el.textContent = ''; return; }
+  const ageSec = (Date.now() - new Date(state.savedAt).getTime()) / 1000;
+  el.textContent = '↻ ' + relativeTime(state.savedAt);
+  el.classList.toggle('stale', ageSec > 300);
+}
+
+// Refresh every visible card-time element from its card's createdAt — cheap.
+// Doesn't touch any other DOM (preserves focus, modal state, scroll).
+function tickTimes() {
+  if (!state) return;
+  document.querySelectorAll('.card-time').forEach(el => {
+    const cardEl = el.closest('.card');
+    if (!cardEl) return;
+    const card = state.cards.find(c => c.id === cardEl.dataset.cardId);
+    if (!card || !card.createdAt) return;
+    const next = relativeTime(card.createdAt);
+    if (el.textContent !== next) el.textContent = next;
+  });
+}
+
+function initTooltipDelegation() {
+  document.addEventListener('mouseover', e => {
+    const t = e.target.closest && e.target.closest('[data-tip]');
+    if (t) showTooltip(t, t.getAttribute('data-tip'));
+  });
+  document.addEventListener('mouseout', e => {
+    const t = e.target.closest && e.target.closest('[data-tip]');
+    if (t) hideTooltip();
+  });
+  // Hide on scroll/resize so it doesn't stick in the wrong place
+  window.addEventListener('scroll', hideTooltip, true);
+  window.addEventListener('resize', hideTooltip);
+}
+
+// ===== UI helpers =====
+function setStatus(text, kind) {
+  const el = $('#status');
+  if (!el) return;
+  // The text label was removed from the header (only the pulsing dot remains
+  // beside the title). Keep state on the wrapper class for color cues.
+  const tx = $('#status-text');
+  if (tx) tx.textContent = text;
+  el.title = text; // tooltip carries the human-readable state
+  el.classList.remove('unsynced','error');
+  if (kind === 'unsynced') el.classList.add('unsynced');
+  if (kind === 'error') el.classList.add('error');
+}
+function toast(msg, ms=2200) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+// Small async confirm dialog (boho-styled). Resolves true/false.
+// opts: { sub?: string, okText?: string, okClass?: 'danger'|'primary' }
+function miniConfirm(msg = 'Confirm?', opts = {}) {
+  return new Promise(resolve => {
+    const overlay = $('#mini-confirm-overlay');
+    const msgEl   = overlay.querySelector('.mc-msg');
+    const subEl   = $('#mc-sub');
+    const okBtn   = $('#mc-ok');
+    const cxBtn   = $('#mc-cancel');
+    msgEl.textContent = msg;
+    if (opts.sub) { subEl.textContent = opts.sub; subEl.style.display = ''; }
+    else          { subEl.textContent = '';        subEl.style.display = 'none'; }
+    okBtn.textContent = opts.okText || 'Delete';
+    okBtn.className = 'mc-btn ' + (opts.okClass || 'danger');
+    overlay.classList.add('show');
+
+    const cleanup = () => {
+      overlay.classList.remove('show');
+      okBtn.onclick = cxBtn.onclick = null;
+      overlay.onclick = null;
+      document.removeEventListener('keydown', onKey);
+    };
+    const onKey = e => {
+      if (e.key === 'Escape') { cleanup(); resolve(false); }
+      else if (e.key === 'Enter') { cleanup(); resolve(true); }
+    };
+    okBtn.onclick = () => { cleanup(); resolve(true); };
+    cxBtn.onclick = () => { cleanup(); resolve(false); };
+    overlay.onclick = e => {
+      if (e.target === overlay) { cleanup(); resolve(false); }
+    };
+    document.addEventListener('keydown', onKey);
+    // Focus the primary action so Enter confirms by default.
+    setTimeout(() => okBtn.focus(), 30);
+  });
+}
+
+// ===== HTTP IO (v3: same-origin fetch to board-steward serve) =====
+function _absorbState(incoming) {
+  state = incoming;
+  if (state.nextNum == null) {
+    state.nextNum = (state.cards || []).reduce((m, c) => Math.max(m, c.num || 0), 0) + 1;
+  }
+  lastRev = state.rev || 0;
+  pendingDirty = false;
+  if (document.getElementById('board-title')) applyBoardTitle();
+  if (document.getElementById('tag-legend-list')) refreshTagLegend();
+}
+async function loadFromFile() {
+  const r = await fetch(BOARD_URL, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`GET ${BOARD_URL} → ${r.status}`);
+  _absorbState(await r.json());
+  detectChangesAndSnapshot();   // v2: seed snapshot on first load (no flash)
+  render();
+  tickLastUpdate();
+  setStatus('live');
+}
+async function save(by='user') {
+  state.rev = (state.rev || 0) + 1;
+  state.savedAt = new Date().toISOString();
+  state.savedBy = by;
+  lastRev = state.rev;
+  try {
+    const r = await fetch(BOARD_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state),
+    });
+    if (!r.ok) throw new Error(`POST → ${r.status}`);
+    suppressPollUntil = Date.now() + 2000;
+    pendingDirty = false;
+    setStatus('live');
+  } catch (e) {
+    setStatus('save failed: ' + (e.message || e), 'error');
+  }
+}
+function scheduleSave() {
+  pendingDirty = true;
+  setStatus('saving…', 'unsynced');
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => save('user'), 400);
+}
+
+// ===== Undo / Redo =====
+// Snapshot strategy: deep-clone the mutable parts of state (cards, columns,
+// title) before each user-initiated mutation. Stack capped at _UNDO_CAP.
+// Text inputs (notes, writeup, card title) snapshot ONCE on focus — not per
+// keystroke — so undo restores the pre-edit state cleanly.
+let _undoStack = [];
+let _redoStack = [];
+const _UNDO_CAP = 80;
+
+function _snapState() {
+  if (!state) return null;
+  return JSON.stringify({
+    title: state.title || '',
+    columns: state.columns || [],
+    cards: state.cards || [],
+  });
+}
+function _restoreSnap(snap) {
+  const o = JSON.parse(snap);
+  state.title = o.title;
+  state.columns = o.columns;
+  state.cards = o.cards;
+}
+function pushUndo() {
+  const s = _snapState();
+  if (s === null) return;
+  // De-dupe — don't push identical consecutive snapshots (e.g. focus-with-no-edit).
+  if (_undoStack.length && _undoStack[_undoStack.length - 1] === s) return;
+  _undoStack.push(s);
+  if (_undoStack.length > _UNDO_CAP) _undoStack.shift();
+  _redoStack.length = 0;
+}
+function undo() {
+  if (!_undoStack.length) { toast('Nothing to undo'); return; }
+  // Blur any focused editor so its post-edit state isn't re-committed onto
+  // the restored snapshot.
+  if (document.activeElement && document.activeElement.blur) {
+    try { document.activeElement.blur(); } catch (_) {}
+  }
+  const cur = _snapState();
+  const prev = _undoStack.pop();
+  if (cur && cur !== prev) _redoStack.push(cur);
+  _restoreSnap(prev);
+  applyBoardTitle();
+  scheduleSave();
+  render();
+  refreshTagLegend();
+  toast('Undo');
+}
+function redo() {
+  if (!_redoStack.length) { toast('Nothing to redo'); return; }
+  if (document.activeElement && document.activeElement.blur) {
+    try { document.activeElement.blur(); } catch (_) {}
+  }
+  const cur = _snapState();
+  const next = _redoStack.pop();
+  if (cur && cur !== next) _undoStack.push(cur);
+  _restoreSnap(next);
+  applyBoardTitle();
+  scheduleSave();
+  render();
+  refreshTagLegend();
+  toast('Redo');
+}
+
+// Arm a "snap on first edit" handler for a text field — captures the
+// pre-edit state once on focus so Ctrl+Z restores it. Safe to attach to
+// inputs, textareas, contentEditable nodes.
+function armUndoOnFocus(el) {
+  if (!el || el.dataset.undoArmed === '1') return;
+  el.dataset.undoArmed = '1';
+  el.addEventListener('focus', () => { pushUndo(); }, true);
+}
+function isUserEditing() {
+  const a = document.activeElement;
+  return a && (a.isContentEditable || a.tagName === 'TEXTAREA' || a.tagName === 'INPUT');
+}
+function startPoll() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    if (pendingDirty) return;
+    if (Date.now() < suppressPollUntil) return;
+    if (isUserEditing()) return;
+    try {
+      const r = await fetch(BOARD_URL, { cache: 'no-store' });
+      if (!r.ok) return;
+      const incoming = await r.json();
+      if ((incoming.rev || 0) !== lastRev) {
+        _absorbState(incoming);
+        detectChangesAndSnapshot();   // v2: mark changed cards for flash
+        render();
+        tickLastUpdate();
+        setStatus('live');
+        toast(state.savedBy === 'claude' ? '↻ Board updated by Claude' : '↻ Board updated');
+      }
+    } catch (e) { /* transient — server might be restarting */ }
+  }, 3000);
+}
+
+// ===== Subtask tree helpers =====
+function countSubtasks(nodes) {
+  let total = 0, done = 0;
+  const walk = ns => ns.forEach(n => { total++; if (n.done) done++; if (n.children) walk(n.children); });
+  walk(nodes || []);
+  return { total, done };
+}
+function deleteSubtaskByPath(rootArr, path) {
+  if (path.length === 1) { rootArr.splice(path[0], 1); return; }
+  const idx = path[0]; // path[1] === 'children'
+  deleteSubtaskByPath(rootArr[idx].children || [], path.slice(2));
+}
+// Stamp both card.updatedAt and card.lastTouchedSubtask whenever subtask state
+// changes — so traversal can sort by "real activity" not just card-level edits.
+function touchSubtask(card) {
+  const ts = now();
+  card.updatedAt = ts;
+  card.lastTouchedSubtask = ts;
+}
+
+// ===== Card-link helpers (bidirectional) =====
+function addCardLink(cardA, cardB) {
+  if (cardA.id === cardB.id) return;
+  if (!cardA.linkedCards) cardA.linkedCards = [];
+  if (!cardB.linkedCards) cardB.linkedCards = [];
+  if (!cardA.linkedCards.includes(cardB.id)) cardA.linkedCards.push(cardB.id);
+  if (!cardB.linkedCards.includes(cardA.id)) cardB.linkedCards.push(cardA.id);
+  cardA.updatedAt = now();
+  cardB.updatedAt = now();
+}
+function removeCardLink(cardA, cardB) {
+  if (cardA.linkedCards) cardA.linkedCards = cardA.linkedCards.filter(id => id !== cardB.id);
+  if (cardB.linkedCards) cardB.linkedCards = cardB.linkedCards.filter(id => id !== cardA.id);
+  cardA.updatedAt = now();
+  cardB.updatedAt = now();
+}
+
+// ===== Day-header formatting (Done column grouping) =====
+function formatDayHeader(ymd) {
+  if (!ymd || ymd.length < 10) return ymd || 'No date';
+  ymd = ymd.slice(0, 10);
+  const [y, m, d] = ymd.split('-').map(Number);
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const today = new Date();
+  const todayYmd = localYmd(today);
+  const yesterdayYmd = localYmd(new Date(today.getTime() - 86400000));
+  if (ymd === todayYmd)      return `Today · ${d} ${months[m-1]} ${y}`;
+  if (ymd === yesterdayYmd)  return `Yesterday · ${d} ${months[m-1]} ${y}`;
+  return `${d} ${months[m-1]} ${y}`;
+}
+
+// ===== Reusable bits =====
+function makePrioChip(card) {
+  const btn = document.createElement('button');
+  const pset = card.priority || 'unset';
+  btn.className = 'prio-chip ' + pset;
+  btn.title = 'Priority: ' + (card.priority || 'unset') + ' — click to cycle';
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    const cycle = { critical: 'mid', mid: 'low', low: null, null: 'critical' };
+    card.priority = cycle[card.priority ?? 'null'];
+    card.updatedAt = now();
+    scheduleSave(); render();
+  };
+  return btn;
+}
+function makeNumRef(card) {
+  const el = document.createElement('span');
+  el.className = 'num-ref';
+  el.textContent = card.num != null ? card.num : '?';
+  el.title = 'Global item number — click to copy "#' + card.num + '"';
+  el.onclick = (e) => {
+    e.stopPropagation();
+    const ref = '#' + card.num + (card.code ? ' ' + card.code : '');
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(ref).then(() => toast('Copied: ' + ref)).catch(() => {});
+    }
+  };
+  return el;
+}
+function makeBadge(card, editable=false) {
+  const b = document.createElement('span');
+  b.className = 'badge';
+  b.textContent = card.code || '';
+  if (editable) {
+    b.contentEditable = 'true';
+    b.title = 'Edit code/badge';
+    b.addEventListener('click', e => e.stopPropagation());
+    b.addEventListener('blur', () => {
+      const v = b.textContent.trim();
+      if (v !== (card.code || '')) { card.code = v; card.updatedAt = now(); scheduleSave(); render(); }
+    });
+    b.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); b.blur(); } });
+  }
+  return b;
+}
+
+// ===== Render: compact card (home view) =====
+function renderCardCompact(card) {
+  const el = document.createElement('div');
+  el.className = 'card';
+  if (card.priority) el.classList.add('prio-' + card.priority);
+  if (_tagFilter.size && !(card.tags || []).some(t => _tagFilter.has(t))) el.classList.add('dim-by-filter');
+  if (_columnFilter.size && !_columnFilter.has(card.column)) el.classList.add('dim-by-filter');
+  el.draggable = true;
+  el.dataset.cardId = card.id;
+  el.dataset.col = card.column;
+  // v2: one-shot flash if this card changed since the last poll.
+  if (_flashIds.has(card.id)) {
+    el.classList.add('flashing');
+    setTimeout(() => el.classList.remove('flashing'), 1300);
+  }
+
+  el.addEventListener('dragstart', e => {
+    e.dataTransfer.setData('text/card-id', card.id);
+    el.classList.add('dragging');
+  });
+  el.addEventListener('dragend', () => el.classList.remove('dragging'));
+  el.addEventListener('click', e => {
+    if (e.target.closest('.prio-chip, .num-ref')) return;
+    openModal(card.id);
+  });
+
+  const head = document.createElement('div');
+  head.className = 'card-head';
+  head.appendChild(makePrioChip(card));
+  head.appendChild(makeNumRef(card));
+  if (card.code) head.appendChild(makeBadge(card, false));
+  // Origin tooltip icon — only if origin text present
+  if (card.origin && card.origin.trim()) {
+    const tip = document.createElement('span');
+    tip.className = 'tip-icon';
+    tip.setAttribute('data-tip', card.origin);
+    tip.textContent = 'i';
+    tip.onclick = (e) => e.stopPropagation();
+    head.appendChild(tip);
+  }
+  // Relative-time pushed to far right of the head row (margin-left: auto)
+  // Saves a row of vertical height vs. having time below the card.
+  if (card.createdAt) {
+    const tm = document.createElement('div');
+    tm.className = 'card-time';
+    tm.textContent = relativeTime(card.createdAt);
+    tm.setAttribute('data-tip',
+      `created : ${fmtTime(card.createdAt)}` +
+      (card.updatedAt && card.updatedAt !== card.createdAt ? `\nupdated : ${fmtTime(card.updatedAt)} (${relativeTime(card.updatedAt)})` : '') +
+      (card.lastTouchedSubtask ? `\nsubtask : ${fmtTime(card.lastTouchedSubtask)} (${relativeTime(card.lastTouchedSubtask)})` : '') +
+      (card.doneAt ? `\ndone    : ${fmtTime(card.doneAt)} (${relativeTime(card.doneAt)})` : '')
+    );
+    tm.onclick = (e) => e.stopPropagation();
+    head.appendChild(tm);
+  }
+  el.appendChild(head);
+
+  const title = document.createElement('div');
+  title.className = 'card-title';
+  title.textContent = card.title || '(untitled)';
+  el.appendChild(title);
+
+  if (card.tags && card.tags.length) {
+    const tags = document.createElement('div');
+    tags.className = 'card-tags';
+    card.tags.forEach(t => {
+      const ch = document.createElement('span');
+      ch.className = 'tag';
+      ch.style.setProperty('--tag-c', tagColor(t));
+      ch.textContent = t === 'aging-30d+' ? '⏰ aging' : t;
+      ch.title = tagKind(t) + ' tag · ' + t;
+      tags.appendChild(ch);
+    });
+    el.appendChild(tags);
+  }
+
+  if (card.subtasks && card.subtasks.length) {
+    const { total, done } = countSubtasks(card.subtasks);
+    const pct = total ? Math.round(done / total * 100) : 0;
+    const p = document.createElement('div');
+    p.className = 'card-progress';
+    p.innerHTML = `<span>${done}/${total}</span><div class="bar"><div style="width:${pct}%"></div></div>`;
+    el.appendChild(p);
+  }
+
+  // (Time moved to head row above; expand-hint removed —
+  // hover lift + cursor:pointer + interactive head elements are enough signal.)
+  return el;
+}
+
+// ===== Render: modal (full detail on click) =====
+function renderModal(card) {
+  const overlay = $('#modal-overlay');
+  overlay.innerHTML = '';
+  overlay.classList.add('open');
+
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.addEventListener('click', e => e.stopPropagation());
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'modal-close';
+  closeBtn.textContent = '×';
+  closeBtn.onclick = closeModal;
+  modal.appendChild(closeBtn);
+
+  // Head
+  const head = document.createElement('div');
+  head.className = 'modal-head';
+  head.appendChild(makePrioChip(card));
+  head.appendChild(makeNumRef(card));
+  head.appendChild(makeBadge(card, true));
+  modal.appendChild(head);
+
+  // Title (editable)
+  const title = document.createElement('div');
+  title.className = 'modal-title';
+  title.contentEditable = 'true';
+  title.textContent = card.title || '';
+  title.addEventListener('blur', () => {
+    const v = title.textContent.trim();
+    if (v !== (card.title || '')) { card.title = v; card.updatedAt = now(); scheduleSave(); }
+  });
+  title.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); title.blur(); } });
+  armUndoOnFocus(title);
+  modal.appendChild(title);
+
+  // Meta: column changer + (auto-set) doneAt info
+  const meta = document.createElement('div');
+  meta.className = 'modal-meta';
+  const colLabel = document.createElement('label');
+  colLabel.textContent = 'Column:';
+  meta.appendChild(colLabel);
+  const colSel = document.createElement('select');
+  state.columns.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c.id; opt.textContent = c.name;
+    if (c.id === card.column) opt.selected = true;
+    colSel.appendChild(opt);
+  });
+  colSel.onchange = () => {
+    card.column = colSel.value;
+    card.updatedAt = now();
+    if (card.column === 'done' && !card.doneAt) card.doneAt = card.updatedAt;
+    if (card.column !== 'done') card.doneAt = null;
+    scheduleSave(); render();
+  };
+  meta.appendChild(colSel);
+
+  const prioLabel = document.createElement('label');
+  prioLabel.textContent = 'Priority:';
+  prioLabel.style.marginLeft = '8px';
+  meta.appendChild(prioLabel);
+  const prioSel = document.createElement('select');
+  ['', 'critical', 'mid', 'low'].forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p; opt.textContent = p || '— unset —';
+    if ((card.priority || '') === p) opt.selected = true;
+    prioSel.appendChild(opt);
+  });
+  prioSel.onchange = () => {
+    card.priority = prioSel.value || null;
+    card.updatedAt = now();
+    scheduleSave(); render();
+  };
+  meta.appendChild(prioSel);
+  modal.appendChild(meta);
+
+  // Origin · why this exists (THE WHY — first thing after meta)
+  const originLabel = document.createElement('div');
+  originLabel.className = 'modal-section-label';
+  const originTitleSpan = document.createElement('span');
+  originTitleSpan.textContent = 'Origin · why this exists';
+  originLabel.appendChild(originTitleSpan);
+  const tip = document.createElement('span');
+  tip.className = 'tip-icon';
+  tip.setAttribute('data-tip',
+    "Why was this card created? Your original words, the conversation context, " +
+    "and the thought process behind it.\n\n" +
+    "Reading this 2 months later you should be able to remember exactly why this " +
+    "is on the board — what triggered it, what we discussed, what trade-offs were " +
+    "weighed.\n\n" +
+    "Claude fills this when creating a card from your message. You can edit anytime."
+  );
+  tip.textContent = 'i';
+  tip.style.fontStyle = 'italic';
+  tip.style.fontFamily = 'serif';
+  originLabel.appendChild(tip);
+  modal.appendChild(originLabel);
+
+  const origin = document.createElement('textarea');
+  origin.className = 'origin-modal';
+  origin.value = card.origin || '';
+  origin.placeholder = 'Why was this created? Your original words / what we discussed / the thought process that led here…';
+  origin.addEventListener('input', () => { card.origin = origin.value; scheduleSave(); });
+  modal.appendChild(origin);
+
+  // Tags editor
+  const tagsLabel = document.createElement('div');
+  tagsLabel.className = 'modal-section-label';
+  tagsLabel.textContent = 'Tags';
+  modal.appendChild(tagsLabel);
+
+  const tagsRow = document.createElement('div');
+  tagsRow.className = 'tags-edit';
+  (card.tags || []).forEach((t, idx) => {
+    const ch = document.createElement('span');
+    ch.className = 'tag';
+    ch.style.setProperty('--tag-c', tagColor(t));
+    ch.textContent = (t === 'aging-30d+' ? '⏰ aging 30d+' : t) + ' ×';
+    ch.title = tagKind(t) + ' tag · click to remove';
+    ch.style.cursor = 'pointer';
+    ch.onclick = () => {
+      card.tags.splice(idx, 1);
+      card.updatedAt = now();
+      scheduleSave(); render();
+    };
+    tagsRow.appendChild(ch);
+  });
+  const addTag = document.createElement('input');
+  addTag.placeholder = '+ tag';
+  addTag.className = 'tag-input';
+  addTag.onkeydown = e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const v = addTag.value.trim();
+      if (!v) return;
+      if (!card.tags) card.tags = [];
+      card.tags.push(v);
+      card.updatedAt = now();
+      scheduleSave(); render();
+    }
+  };
+  tagsRow.appendChild(addTag);
+  modal.appendChild(tagsRow);
+
+  // Linked cards (bidirectional family/relation links)
+  const linksLabel = document.createElement('div');
+  linksLabel.className = 'modal-section-label';
+  const linksTitle = document.createElement('span');
+  linksTitle.textContent = 'Linked cards';
+  linksLabel.appendChild(linksTitle);
+  const linksTip = document.createElement('span');
+  linksTip.className = 'tip-icon';
+  linksTip.setAttribute('data-tip',
+    'Cards that relate to this one (same family, blockers, follow-ups).\n\n' +
+    'Click a link to jump to that card.\n\n' +
+    'Add by typing #N (e.g. #5) or a code (e.g. FACT9) and pressing Enter. ' +
+    'Links are bidirectional — adding link A→B also adds B→A.\n\n' +
+    'Remove with the × on hover.'
+  );
+  linksTip.textContent = 'i';
+  linksLabel.appendChild(linksTip);
+  modal.appendChild(linksLabel);
+
+  const linksRow = document.createElement('div');
+  linksRow.className = 'links-edit';
+  (card.linkedCards || []).forEach(linkedId => {
+    const target = state.cards.find(c => c.id === linkedId);
+    const chip = document.createElement('span');
+    chip.className = 'link-chip';
+    if (!target) {
+      chip.classList.add('orphan');
+      chip.textContent = '(missing) ' + linkedId;
+      const rm = document.createElement('span');
+      rm.className = 'link-remove';
+      rm.textContent = '×';
+      rm.onclick = (e) => {
+        e.stopPropagation();
+        card.linkedCards = (card.linkedCards || []).filter(id => id !== linkedId);
+        card.updatedAt = now();
+        scheduleSave(); render();
+      };
+      chip.appendChild(rm);
+      linksRow.appendChild(chip);
+      return;
+    }
+    if (target.priority) chip.classList.add('link-prio-' + target.priority);
+    if (target.column === 'done') chip.classList.add('link-done');
+
+    const txt = document.createElement('span');
+    txt.className = 'link-text';
+    txt.textContent = '#' + target.num + (target.code ? ' ' + target.code : '');
+    chip.appendChild(txt);
+    const ttl = document.createElement('span');
+    ttl.className = 'link-title';
+    const shortTitle = (target.title || '').length > 40 ? target.title.slice(0,40) + '…' : (target.title || '');
+    ttl.textContent = ' · ' + shortTitle;
+    chip.appendChild(ttl);
+
+    chip.onclick = () => openModal(target.id);
+    const rm = document.createElement('span');
+    rm.className = 'link-remove';
+    rm.textContent = '×';
+    rm.title = 'Remove link';
+    rm.onclick = (e) => {
+      e.stopPropagation();
+      removeCardLink(card, target);
+      scheduleSave(); render();
+    };
+    chip.appendChild(rm);
+    linksRow.appendChild(chip);
+  });
+  const addLinkInput = document.createElement('input');
+  addLinkInput.className = 'tag-input';
+  addLinkInput.placeholder = '+ link (#N or code)';
+  addLinkInput.style.width = '160px';
+  addLinkInput.onkeydown = e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const q = addLinkInput.value.trim();
+    if (!q) return;
+    const m = q.match(/^#?(\d+)$/);
+    let target = null;
+    if (m) {
+      const n = parseInt(m[1], 10);
+      target = state.cards.find(c => c.num === n);
+    } else {
+      const ql = q.toLowerCase();
+      target = state.cards.find(c => (c.code || '').toLowerCase() === ql);
+    }
+    if (!target) { toast('No card matches "' + q + '"'); return; }
+    if (target.id === card.id) { toast("Can't link a card to itself"); return; }
+    if ((card.linkedCards || []).includes(target.id)) {
+      toast('Already linked to #' + target.num);
+      addLinkInput.value = '';
+      return;
+    }
+    addCardLink(card, target);
+    addLinkInput.value = '';
+    scheduleSave(); render();
+  };
+  linksRow.appendChild(addLinkInput);
+  modal.appendChild(linksRow);
+
+  // Subtasks
+  const { total, done } = countSubtasks(card.subtasks || []);
+  const stLabel = document.createElement('div');
+  stLabel.className = 'modal-section-label';
+  stLabel.textContent = total ? `Subtasks (${done}/${total} · ${total ? Math.round(done/total*100) : 0}%)` : 'Subtasks';
+  modal.appendChild(stLabel);
+
+  const stRoot = document.createElement('div');
+  stRoot.className = 'subtasks';
+  (card.subtasks || []).forEach((node, idx) => {
+    stRoot.appendChild(renderSubtaskNode(node, card, String(idx + 1), [idx]));
+  });
+  modal.appendChild(stRoot);
+
+  const addSt = document.createElement('button');
+  addSt.className = 'add-subtask';
+  addSt.textContent = '+ subtask';
+  addSt.onclick = () => {
+    if (!card.subtasks) card.subtasks = [];
+    card.subtasks.push({ id: uid('s'), text: 'new subtask', done: false, collapsed: false, children: [] });
+    touchSubtask(card);
+    scheduleSave(); render();
+  };
+  modal.appendChild(addSt);
+
+  // Notes
+  const notesLabel = document.createElement('div');
+  notesLabel.className = 'modal-section-label';
+  notesLabel.textContent = card.column === 'ideas' ? 'Idea detail' : 'Notes';
+  modal.appendChild(notesLabel);
+
+  const notes = document.createElement('textarea');
+  notes.className = 'notes-modal';
+  notes.value = card.notes || '';
+  notes.placeholder = card.column === 'ideas'
+    ? 'Describe the idea (Claude reads this and will triage it)…'
+    : 'Notes / context (you or Claude)…';
+  notes.addEventListener('input', () => { card.notes = notes.value; scheduleSave(); });
+  armUndoOnFocus(notes);
+  modal.appendChild(notes);
+
+  // Write-up
+  const wuLabel = document.createElement('div');
+  wuLabel.className = 'modal-section-label';
+  wuLabel.textContent = card.column === 'done' ? '✓ Write-up (how it was done)' : 'Write-up (filled when done)';
+  modal.appendChild(wuLabel);
+
+  const wu = document.createElement('textarea');
+  wu.className = 'writeup-modal';
+  wu.value = card.writeup || '';
+  wu.placeholder = card.column === 'done'
+    ? 'Claude writes this when moving the card to Done…'
+    : '(Claude will fill this when this card is marked done)';
+  wu.addEventListener('input', () => { card.writeup = wu.value; scheduleSave(); });
+  armUndoOnFocus(wu);
+  modal.appendChild(wu);
+
+  if (card.column === 'done' && !(card.writeup || '').trim()) {
+    const flag = document.createElement('div');
+    flag.className = 'writeup-missing-flag';
+    flag.textContent = '⚠ Done card missing write-up';
+    modal.appendChild(flag);
+  }
+
+  // Foot
+  const foot = document.createElement('div');
+  foot.className = 'modal-foot';
+  const dates = document.createElement('span');
+  const createdStr = card.createdAt ? 'created ' + fmtTime(card.createdAt) : '';
+  const doneStr    = card.doneAt    ? ' · ✓ done ' + fmtTime(card.doneAt)    : '';
+  const updStr     = (card.updatedAt && card.updatedAt !== card.createdAt) ? ' · upd ' + fmtTime(card.updatedAt) : '';
+  dates.textContent = createdStr + (card.doneAt ? doneStr : updStr);
+  dates.title =
+    `created : ${card.createdAt || '—'}\n` +
+    `updated : ${card.updatedAt || '—'}\n` +
+    `done    : ${card.doneAt    || '—'}`;
+  foot.appendChild(dates);
+
+  const del = document.createElement('button');
+  del.className = 'modal-delete';
+  del.textContent = 'Delete card';
+  del.onclick = async () => {
+    if (!(await miniConfirm('Confirm?', { sub: `Delete card "${card.title}"` }))) return;
+    pushUndo();
+    state.cards = state.cards.filter(c => c.id !== card.id);
+    closeModal();
+    scheduleSave(); render();
+  };
+  foot.appendChild(del);
+  modal.appendChild(foot);
+
+  overlay.appendChild(modal);
+}
+
+function openModal(cardId) { _openCardId = cardId; render(); }
+function closeModal() {
+  _openCardId = null;
+  const o = $('#modal-overlay');
+  o.classList.remove('open');
+  o.innerHTML = '';
+}
+
+// ===== Subtask render (used inside modal) =====
+function renderSubtaskNode(node, card, number, path) {
+  const hasChildren = node.children && node.children.length > 0;
+  const wrap = document.createElement('div');
+  wrap.className = 'subtask';
+  if (hasChildren) wrap.classList.add('has-children');
+  if (node.collapsed) wrap.classList.add('collapsed');
+  if (node.done) wrap.classList.add('done');
+
+  const row = document.createElement('div');
+  row.className = 'row';
+
+  const toggle = document.createElement('button');
+  toggle.className = 'toggle';
+  toggle.onclick = () => {
+    if (!hasChildren) return;
+    node.collapsed = !node.collapsed;
+    scheduleSave(); render();
+  };
+  row.appendChild(toggle);
+
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = !!node.done;
+  cb.onchange = () => {
+    node.done = cb.checked;
+    touchSubtask(card);
+    scheduleSave(); render();
+  };
+  row.appendChild(cb);
+
+  const num = document.createElement('span');
+  num.className = 'num';
+  num.textContent = number;
+  row.appendChild(num);
+
+  const txt = document.createElement('span');
+  txt.className = 'text';
+  txt.contentEditable = 'true';
+  txt.textContent = node.text || '';
+  txt.addEventListener('blur', () => {
+    const v = txt.textContent.trim();
+    if (v !== (node.text || '')) { node.text = v; touchSubtask(card); scheduleSave(); }
+  });
+  txt.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); txt.blur(); } });
+  row.appendChild(txt);
+
+  const acts = document.createElement('div');
+  acts.className = 'st-actions';
+  const addChild = document.createElement('button');
+  addChild.className = 'icon-btn';
+  addChild.textContent = '+';
+  addChild.title = 'Add child subtask';
+  addChild.onclick = () => {
+    if (!node.children) node.children = [];
+    node.children.push({ id: uid('s'), text: 'new subtask', done: false, collapsed: false, children: [] });
+    node.collapsed = false;
+    touchSubtask(card);
+    scheduleSave(); render();
+  };
+  acts.appendChild(addChild);
+
+  const delSt = document.createElement('button');
+  delSt.className = 'icon-btn del-btn';
+  delSt.textContent = '×';
+  delSt.title = 'Delete subtask (and any children)';
+  delSt.onclick = () => {
+    deleteSubtaskByPath(card.subtasks, path);
+    touchSubtask(card);
+    scheduleSave(); render();
+  };
+  acts.appendChild(delSt);
+  row.appendChild(acts);
+
+  wrap.appendChild(row);
+
+  if (hasChildren) {
+    const ch = document.createElement('div');
+    ch.className = 'children';
+    node.children.forEach((child, ci) => {
+      const childNumber = number + '.' + (ci + 1);
+      ch.appendChild(renderSubtaskNode(child, card, childNumber, path.concat(['children', ci])));
+    });
+    wrap.appendChild(ch);
+  }
+  return wrap;
+}
+
+// ===== Render top-level (columns) =====
+function enterApp() {
+  $('#setup').style.display = 'none';
+  $('#view-toggle').style.display = '';
+  $('#tags-btn').style.display = '';
+  applyBoardTitle();
+  wireBoardTitle();
+  refreshTagLegend();
+  setView(_view);
+}
+
+// Read project name from board.json `title` field. Falls back gracefully.
+function applyBoardTitle() {
+  const el = $('#board-title');
+  if (!el || !state) return;
+  if (el.dataset.editing === '1') return; // don't clobber mid-edit
+  const t = (state.title || '').trim() || 'Work Board';
+  el.textContent = t;
+  document.title = t;
+}
+
+// Title interactions — wired once (idempotent guard via dataset.wired).
+function wireBoardTitle() {
+  const el = $('#board-title');
+  if (!el || el.dataset.wired === '1') return;
+  el.dataset.wired = '1';
+
+  el.addEventListener('click', () => {
+    if (el.dataset.editing === '1') return; // editing — let caret place
+    setView('board');
+  });
+
+  el.addEventListener('dblclick', () => {
+    pushUndo();
+    el.dataset.editing = '1';
+    el.contentEditable = 'true';
+    el.textContent = (state && state.title) ? state.title : 'Work Board';
+    el.focus();
+    // Select all so first keystroke replaces.
+    const r = document.createRange(); r.selectNodeContents(el);
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  });
+
+  const commit = () => {
+    if (el.dataset.editing !== '1') return;
+    const v = el.textContent.trim();
+    el.contentEditable = 'false';
+    el.dataset.editing = '0';
+    if (v && state && v !== state.title) {
+      state.title = v;
+      scheduleSave();
+    }
+    applyBoardTitle();
+  };
+  el.addEventListener('blur', commit);
+  el.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+    else if (e.key === 'Escape') {
+      e.preventDefault();
+      el.dataset.editing = '0';
+      el.contentEditable = 'false';
+      applyBoardTitle(); // revert
+    }
+  });
+}
+
+// ===== View switcher (Board / Calendar) =====
+let _view = 'board';
+let _calCursor = null; // first day of currently displayed month
+function setView(v) {
+  _view = v;
+  $('#board').style.display    = (v === 'board')    ? 'flex' : 'none';
+  $('#calendar').style.display = (v === 'calendar') ? 'flex' : 'none';
+  document.querySelectorAll('#view-toggle button').forEach(b => {
+    b.classList.toggle('active', b.dataset.view === v);
+  });
+  render();
+}
+
+function render() {
+  if (!state) return;
+  if (_view === 'board') {
+    const board = $('#board');
+    board.innerHTML = '';
+    state.columns.forEach(col => {
+      const cards = state.cards.filter(c => c.column === col.id);
+      board.appendChild(renderColumn(col, cards));
+    });
+    const addCol = document.createElement('button');
+    addCol.className = 'col-add-btn';
+    addCol.textContent = '+ Add column';
+    addCol.onclick = () => {
+      const name = prompt('Column name?');
+      if (!name) return;
+      pushUndo();
+      state.columns.push({ id: uid('col'), name, kind: 'custom' });
+      scheduleSave(); render();
+    };
+    board.appendChild(addCol);
+  } else if (_view === 'calendar') {
+    renderCalendar();
+  }
+
+  // Modal renders on top of either view
+  if (_openCardId) {
+    const card = state.cards.find(c => c.id === _openCardId);
+    if (card) renderModal(card);
+    else { _openCardId = null; closeModal(); }
+  }
+}
+
+// ===== Tag colour + taxonomy lookup =====
+// Single source of truth for "what colour is this tag" used by card chips,
+// modal chips, and the legend popover. Taxonomy comes from board.json's
+// tagTaxonomy (main + sub with explicit colours per industry profile);
+// custom tags fall back to a deterministic 8-colour neutral palette so the
+// same tag name always renders the same colour, even without a taxonomy
+// entry. Hash is FNV-1a-ish over the tag name.
+const _CUSTOM_TAG_PALETTE = [
+  '#7E8B8E', '#A8826C', '#6B8E7A', '#A0859C',
+  '#8E7E6B', '#6F8FB5', '#A88B6B', '#7A8580',
+];
+function _tagHash(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = (h + (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24)) >>> 0;
+  }
+  return h;
+}
+function _taxonomyIndex() {
+  // Map: name (lower) → { kind: 'main'|'sub', color }
+  const idx = new Map();
+  const tx = (state && state.tagTaxonomy) || {};
+  (tx.main || []).forEach(t => idx.set(String(t.name).toLowerCase(), { kind: 'main', color: t.color }));
+  (tx.sub  || []).forEach(t => idx.set(String(t.name).toLowerCase(), { kind: 'sub',  color: t.color }));
+  return idx;
+}
+function tagColor(name) {
+  const idx = _taxonomyIndex();
+  const hit = idx.get(String(name).toLowerCase());
+  if (hit && hit.color) return hit.color;
+  return _CUSTOM_TAG_PALETTE[_tagHash(name) % _CUSTOM_TAG_PALETTE.length];
+}
+function tagKind(name) {
+  const idx = _taxonomyIndex();
+  const hit = idx.get(String(name).toLowerCase());
+  return hit ? hit.kind : 'custom';
+}
+
+// ===== Filter legend — Columns + Main/Sub/Custom tag sections =====
+let _tagFilter = new Set();     // set of tag-name strings (multi-select)
+let _columnFilter = new Set();  // set of column-id strings (multi-select)
+let _tagLegendOpen = false;
+const _TAG_CAP_MAIN = 10;
+const _TAG_CAP_SUB  = 15;
+
+// Column-chip colour: stable per column kind, with deterministic fallback for
+// custom columns. Same palette family as tag colours.
+const _COL_KIND_COLOR = {
+  intake:  '#BFA661',   // gold — Ideas (incoming)
+  todo:    '#8B8680',   // slate — Backlog
+  active:  '#D97757',   // coral — In Progress
+  blocked: '#A03030',   // deep red — Blocked
+  done:    '#3D8F65',   // emerald — Done
+};
+function columnColor(col) {
+  if (!col) return '#8b8680';
+  if (col.kind && _COL_KIND_COLOR[col.kind]) return _COL_KIND_COLOR[col.kind];
+  // custom column → deterministic from id (reuse tag hash palette)
+  return _CUSTOM_TAG_PALETTE[_tagHash(col.id || col.name || '') % _CUSTOM_TAG_PALETTE.length];
+}
+
+function refreshTagLegend() {
+  const body = document.getElementById('tag-legend-body');
+  const countEl = document.getElementById('tags-count');
+  const clearBtn = document.getElementById('tag-clear');
+  const profileEl = document.getElementById('tag-profile-label');
+  if (!body || !state) return;
+
+  // Tally tag usage across all cards (case-preserving — pick first form seen)
+  const tally = new Map();
+  const display = new Map();
+  (state.cards || []).forEach(c => {
+    (c.tags || []).forEach(t => {
+      const raw = String(t).trim();
+      if (!raw) return;
+      const k = raw.toLowerCase();
+      tally.set(k, (tally.get(k) || 0) + 1);
+      if (!display.has(k)) display.set(k, raw);
+    });
+  });
+
+  const tx = state.tagTaxonomy || {};
+  const profileName = tx.profile || 'custom';
+  if (profileEl) profileEl.textContent = profileName;
+  if (countEl) countEl.textContent = tally.size;
+
+  // Bucket: main / sub / custom (anything not in taxonomy)
+  const mainList = (tx.main || []).map(t => t.name.toLowerCase());
+  const subList  = (tx.sub  || []).map(t => t.name.toLowerCase());
+  const taxonomySet = new Set([...mainList, ...subList]);
+
+  body.innerHTML = '';
+
+  // ---- Columns section (auto-derived from state.columns) ----
+  // Lets users filter the board by column from the same legend surface as
+  // tags. Filter ANDs with the tag filter so Ideas → staging works.
+  const colSection = document.createElement('div');
+  colSection.className = 'tag-legend-section';
+  const colHead = document.createElement('div');
+  colHead.className = 'tag-legend-section-head';
+  const colLbl = document.createElement('span'); colLbl.textContent = 'Columns';
+  colHead.appendChild(colLbl);
+  const colHint = document.createElement('span');
+  colHint.className = 'hint'; colHint.textContent = 'filter by status';
+  colHead.appendChild(colHint);
+  colSection.appendChild(colHead);
+
+  const colList = document.createElement('div');
+  colList.className = 'tag-legend-list';
+  (state.columns || []).forEach(col => {
+    const n = (state.cards || []).filter(c => c.column === col.id).length;
+    const chip = document.createElement('button');
+    chip.className = 'tag-legend-chip';
+    chip.style.setProperty('--tag-c', columnColor(col));
+    if (n === 0) chip.classList.add('unused');
+    if (_columnFilter.has(col.id)) chip.classList.add('active');
+    const txt = document.createElement('span');
+    // Strip leading emoji for cleaner labels but keep it as a prefix
+    txt.textContent = col.name || col.id;
+    const cnt = document.createElement('span'); cnt.className = 'count'; cnt.textContent = n;
+    chip.appendChild(txt);
+    chip.appendChild(cnt);
+    if (n > 0) {
+      chip.onclick = () => {
+        if (_columnFilter.has(col.id)) _columnFilter.delete(col.id);
+        else _columnFilter.add(col.id);
+        refreshTagLegend();
+        render();
+      };
+    }
+    colList.appendChild(chip);
+  });
+  colSection.appendChild(colList);
+  body.appendChild(colSection);
+
+  // Helper to render one section
+  function renderSection(label, hint, tagNames, cap, kind) {
+    const section = document.createElement('div');
+    section.className = 'tag-legend-section';
+
+    const head = document.createElement('div');
+    head.className = 'tag-legend-section-head';
+    const lbl = document.createElement('span'); lbl.textContent = label;
+    head.appendChild(lbl);
+    if (hint) {
+      const h = document.createElement('span'); h.className = 'hint'; h.textContent = hint;
+      head.appendChild(h);
+    }
+    if (cap) {
+      const usedCount = kind === 'custom' ? tagNames.length : tagNames.length;
+      const cm = document.createElement('span');
+      cm.className = 'cap';
+      cm.textContent = `${usedCount}/${cap}`;
+      if (usedCount >= cap) cm.classList.add('over');
+      else if (usedCount >= cap - 2) cm.classList.add('near');
+      head.appendChild(cm);
+    }
+    section.appendChild(head);
+
+    const list = document.createElement('div');
+    list.className = 'tag-legend-list';
+
+    if (!tagNames.length) {
+      const empty = document.createElement('div');
+      empty.className = 'tag-legend-empty';
+      empty.textContent = kind === 'custom'
+        ? 'No custom tags — agents stick to the profile so far. ✓'
+        : 'None defined for this profile.';
+      list.appendChild(empty);
+    } else {
+      tagNames.forEach(name => {
+        const used = tally.get(name) || 0;
+        const chip = document.createElement('button');
+        chip.className = 'tag-legend-chip';
+        chip.style.setProperty('--tag-c', tagColor(name));
+        if (used === 0) chip.classList.add('unused');
+        const dispName = display.get(name) || name;
+        // Active state — accept either the display name OR the lowercased key
+        // in the filter set, since onclick stores dispName.
+        if (_tagFilter.has(dispName) || _tagFilter.has(name)) chip.classList.add('active');
+        const txt = document.createElement('span'); txt.textContent = dispName;
+        const cnt = document.createElement('span'); cnt.className = 'count'; cnt.textContent = used;
+        chip.appendChild(txt);
+        chip.appendChild(cnt);
+        if (used > 0) {
+          chip.onclick = () => {
+            if (_tagFilter.has(dispName)) _tagFilter.delete(dispName);
+            else _tagFilter.add(dispName);
+            refreshTagLegend();
+            render();
+          };
+        }
+        list.appendChild(chip);
+      });
+    }
+    section.appendChild(list);
+    return section;
+  }
+
+  // Sort each bucket: used tags first (by count desc), then unused alpha
+  function sortForDisplay(names) {
+    return [...names].sort((a, b) => {
+      const ua = tally.get(a) || 0;
+      const ub = tally.get(b) || 0;
+      if (ua !== ub) return ub - ua;
+      return a.localeCompare(b);
+    });
+  }
+
+  // Custom = tags used on cards that are NOT in the taxonomy
+  const customNames = [...tally.keys()].filter(t => !taxonomySet.has(t));
+  customNames.sort((a, b) => (tally.get(b) || 0) - (tally.get(a) || 0) || a.localeCompare(b));
+
+  body.appendChild(renderSection(
+    'Main',
+    'core categories',
+    sortForDisplay(mainList),
+    _TAG_CAP_MAIN,
+    'main',
+  ));
+  body.appendChild(renderSection(
+    'Sub',
+    'modifiers · status',
+    sortForDisplay(subList),
+    _TAG_CAP_SUB,
+    'sub',
+  ));
+  body.appendChild(renderSection(
+    'Custom',
+    'off-profile · review periodically',
+    customNames,
+    null,
+    'custom',
+  ));
+
+  if (clearBtn) clearBtn.style.display = (_tagFilter.size || _columnFilter.size) ? '' : 'none';
+}
+
+function toggleTagLegend(open) {
+  const popover = document.getElementById('tag-legend');
+  const btn = document.getElementById('tags-btn');
+  if (!popover || !btn) return;
+  _tagLegendOpen = (open === undefined) ? !_tagLegendOpen : open;
+  popover.style.display = _tagLegendOpen ? '' : 'none';
+  btn.classList.toggle('active', _tagLegendOpen);
+  if (_tagLegendOpen) refreshTagLegend();
+}
+
+// ===== Calendar v2 — calmer layout: topbar + month-at-a-glance + filter chips =====
+// Filter applies to chips shown on the grid. null = show all.
+let _calFilter = new Set(); // multi-select: any of 'done' | 'open' | 'critical' | 'mid' | 'low'
+
+function renderCalendar() {
+  const cal = $('#calendar');
+  cal.innerHTML = '';
+
+  // Anchor month: default = current month
+  if (!_calCursor) {
+    const t = new Date();
+    _calCursor = new Date(t.getFullYear(), t.getMonth(), 1);
+  }
+  const monthStart = new Date(_calCursor);
+  const monthName  = monthStart.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const todayStr   = localYmd(new Date());
+
+  // ----- Topbar: month name + nav + month-at-a-glance stats -----
+  const topbar = document.createElement('div');
+  topbar.className = 'cal-topbar';
+
+  const title = document.createElement('h2');
+  title.textContent = monthName;
+  topbar.appendChild(title);
+
+  const nav = document.createElement('div');
+  nav.className = 'cal-nav';
+  const mkNav = (label, cls, onclick) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    if (cls) b.className = cls;
+    b.onclick = onclick;
+    return b;
+  };
+  nav.appendChild(mkNav('‹', '', () => {
+    _calCursor = new Date(monthStart.getFullYear(), monthStart.getMonth() - 1, 1);
+    renderCalendar();
+  }));
+  nav.appendChild(mkNav('Today', 'cal-today-btn', () => {
+    const t = new Date();
+    _calCursor = new Date(t.getFullYear(), t.getMonth(), 1);
+    renderCalendar();
+  }));
+  nav.appendChild(mkNav('›', '', () => {
+    _calCursor = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 1);
+    renderCalendar();
+  }));
+  topbar.appendChild(nav);
+
+  // Month-at-a-glance summary (right side)
+  const monthMonth = monthStart.getMonth();
+  const monthYear  = monthStart.getFullYear();
+  const inMonth = (d) => { const x = new Date(d); return x.getMonth() === monthMonth && x.getFullYear() === monthYear; };
+  let shippedCount = 0, createdCount = 0, openCount = 0;
+  (state.cards || []).forEach(c => {
+    if (c.column === 'ideas') return;
+    if (c.doneAt && inMonth(c.doneAt)) shippedCount++;
+    if (c.createdAt && inMonth(c.createdAt)) createdCount++;
+    if (c.column !== 'done' && c.createdAt && inMonth(c.createdAt)) openCount++;
+  });
+  // Clickable summary — each stat maps to a calendar filter so users can
+  // jump straight to "show me what shipped" or "what's still open".
+  const summary = document.createElement('div');
+  summary.className = 'cal-summary';
+  // 'created' is its own toggle key — semantically "include all cards"
+  // (every card was created, so this OR-combines with the others).
+  // Activating Created with Shipped/Open does NOT clear them; they coexist
+  // and pass via OR in the day-filter.
+  const SUMMARY_STATS = [
+    { key: 'done',    cls: 'shipped', num: shippedCount, label: 'shipped' },
+    { key: 'created', cls: 'created', num: createdCount, label: 'created' },
+    { key: 'open',    cls: 'open',    num: openCount,    label: 'still open' },
+  ];
+  SUMMARY_STATS.forEach(s => {
+    const btn = document.createElement('button');
+    btn.className = 'stat ' + s.cls;
+    if (_calFilter.has(s.key)) btn.classList.add('active');
+    btn.innerHTML = `<span class="stat-num">${s.num}</span> ${s.label}`;
+    btn.title = s.key === 'done' ? 'Toggle: shipped cards'
+              : s.key === 'open' ? 'Toggle: still-open cards'
+              : 'Toggle: all cards created this month';
+    btn.onclick = () => {
+      if (_calFilter.has(s.key)) { _calFilter.delete(s.key); }
+      else { _calFilter.add(s.key); }
+      renderCalendar();
+    };
+    summary.appendChild(btn);
+  });
+  topbar.appendChild(summary);
+  cal.appendChild(topbar);
+
+  // ----- Filter chips: All / Done / Open / Critical / Mid / Low -----
+  const filters = document.createElement('div');
+  filters.className = 'cal-filters';
+  const FILTERS = [
+    { key: null,         label: 'All',      swatch: false },
+    { key: 'done',       label: 'Done',     swatch: true },
+    { key: 'open',       label: 'Open',     swatch: true },
+    { key: 'critical',   label: 'Critical', swatch: true },
+    { key: 'mid',        label: 'Mid',      swatch: true },
+    { key: 'low',        label: 'Low',      swatch: true },
+  ];
+  FILTERS.forEach(f => {
+    const chip = document.createElement('button');
+    chip.className = 'cal-filter-chip';
+    if (f.key) chip.dataset.f = f.key;
+    if (f.key === null) {
+      if (_calFilter.size === 0) chip.classList.add('active');
+    } else if (_calFilter.has(f.key)) {
+      chip.classList.add('active');
+    }
+    chip.innerHTML = (f.swatch ? '<span class="swatch"></span>' : '') + f.label;
+    chip.onclick = () => {
+      if (f.key === null) { _calFilter.clear(); }
+      else if (_calFilter.has(f.key)) { _calFilter.delete(f.key); }
+      else { _calFilter.add(f.key); }
+      renderCalendar();
+    };
+    filters.appendChild(chip);
+  });
+  cal.appendChild(filters);
+
+  // ----- Grid -----
+  const grid = document.createElement('div');
+  grid.className = 'cal-grid';
+
+  const dowRow = document.createElement('div');
+  dowRow.className = 'cal-dow';
+  ['SUN','MON','TUE','WED','THU','FRI','SAT'].forEach((d, i) => {
+    const c = document.createElement('div');
+    c.className = 'dow' + (i === 0 || i === 6 ? ' weekend' : '');
+    c.textContent = d;
+    dowRow.appendChild(c);
+  });
+  grid.appendChild(dowRow);
+
+  const gridStart = new Date(monthStart);
+  gridStart.setDate(gridStart.getDate() - gridStart.getDay());
+
+  const weeksEl = document.createElement('div');
+  weeksEl.className = 'cal-weeks';
+
+  // Adaptive: only show as many weeks as needed (5 instead of always 6
+  // when the month fits cleanly — kills one row of "muted" overflow).
+  const lastOfMonth = new Date(monthYear, monthMonth + 1, 0);
+  const totalCells  = lastOfMonth.getDate() + monthStart.getDay();
+  const weekCount   = Math.ceil(totalCells / 7);
+
+  for (let w = 0; w < weekCount; w++) {
+    const weekEl = document.createElement('div');
+    weekEl.className = 'cal-week';
+
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(gridStart);
+      d.setDate(gridStart.getDate() + w * 7 + i);
+      const dayEl = document.createElement('div');
+      dayEl.className = 'cal-day';
+      if (d.getMonth() !== monthMonth) dayEl.classList.add('muted');
+      const ds = localYmd(d);
+      if (ds === todayStr) dayEl.classList.add('today');
+
+      const num = document.createElement('div');
+      num.className = 'cal-daynum';
+      num.textContent = d.getDate();
+      dayEl.appendChild(num);
+
+      // Pull cards landing on this day. Apply filter.
+      const dayCards = state.cards.filter(card => {
+        if (!card.createdAt) return false;
+        if (card.column === 'ideas') return false;
+        const refTs = card.doneAt || card.createdAt;
+        if (localYmd(refTs) !== ds) return false;
+        // No filters → show all. Otherwise card passes if it matches ANY
+        // active filter (union/OR), so user can combine e.g. Done + Critical.
+        // 'created' = wildcard (every card was created) — passes everything.
+        if (_calFilter.size === 0) return true;
+        if (_calFilter.has('created')) return true;
+        for (const f of _calFilter) {
+          if (f === 'done' && card.column === 'done') return true;
+          if (f === 'open' && card.column !== 'done') return true;
+          if ((f === 'critical' || f === 'mid' || f === 'low')
+              && card.column !== 'done' && card.priority === f) return true;
+        }
+        return false;
+      }).sort((a, b) => {
+        if (a.column === 'done' && b.column !== 'done') return -1;
+        if (b.column === 'done' && a.column !== 'done') return 1;
+        return (a.num || 0) - (b.num || 0);
+      });
+
+      if (dayCards.length) {
+        const eventList = document.createElement('div');
+        eventList.className = 'cal-events';
+        // Density-aware: show 4 visible (was 5); +N more chip for the rest
+        const MAX_VISIBLE = 4;
+        dayCards.slice(0, MAX_VISIBLE).forEach(card => {
+          eventList.appendChild(makeCalendarChip(card));
+        });
+        if (dayCards.length > MAX_VISIBLE) {
+          const more = document.createElement('div');
+          more.className = 'cal-more';
+          more.textContent = '+ ' + (dayCards.length - MAX_VISIBLE) + ' more';
+          more.title = 'Click to filter';
+          more.style.cursor = 'pointer';
+          more.onclick = () => {
+            // Quick affordance: open the first hidden card's modal — gives users
+            // a way to drill in without overcrowding the cell.
+            const first = dayCards[MAX_VISIBLE];
+            if (first) openModal(first.id);
+          };
+          eventList.appendChild(more);
+        }
+        dayEl.appendChild(eventList);
+      }
+
+      weekEl.appendChild(dayEl);
+    }
+
+    weeksEl.appendChild(weekEl);
+  }
+
+  grid.appendChild(weeksEl);
+  cal.appendChild(grid);
+}
+
+// One chip per card on its event-day. Done = green, otherwise priority color.
+function makeCalendarChip(card) {
+  const chip = document.createElement('div');
+  chip.className = 'cal-event-chip';
+  if (card.column === 'done') chip.classList.add('done');
+  else if (card.priority) chip.classList.add('prio-' + card.priority);
+
+  const dot = document.createElement('span');
+  dot.className = 'event-dot';
+  chip.appendChild(dot);
+
+  const txt = document.createElement('span');
+  txt.className = 'event-text';
+  const numSpan = document.createElement('span');
+  numSpan.className = 'ev-num';
+  numSpan.textContent = '#' + card.num;
+  txt.appendChild(numSpan);
+  txt.appendChild(document.createTextNode((card.code ? card.code + ' ' : '') + (card.title || '')));
+  chip.appendChild(txt);
+
+  // JS tooltip (per project convention — no native title=)
+  const refTs = card.doneAt || card.createdAt;
+  const verb  = card.column === 'done' ? '✓ done' :
+                card.column === 'inprogress' ? 'in progress · created' :
+                card.column === 'blocked' ? 'blocked · created' :
+                'created';
+  chip.setAttribute('data-tip',
+    `#${card.num} ${card.code || ''}\n${card.title}\n\n${verb} ${fmtTime(refTs)} (${relativeTime(refTs)})`
+  );
+  // Open the modal in-place — don't switch to Board view, so closing the
+  // modal (Esc / × / overlay) leaves the user on Calendar.
+  chip.onclick = () => { openModal(card.id); };
+  return chip;
+}
+
+function renderColumn(col, cards) {
+  const el = document.createElement('div');
+  el.className = 'column';
+  el.dataset.col = col.id;
+
+  // Card drag-drop (cards moving INTO this column) — distinguish from
+  // column-reorder drag by checking the dataTransfer type on dragover.
+  el.addEventListener('dragover', e => {
+    // Skip if a column is being dragged (column-reorder owns the handler below)
+    if (document.body.classList.contains('col-dragging-active')) return;
+    e.preventDefault();
+    el.classList.add('dragover');
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('dragover'));
+  el.addEventListener('drop', e => {
+    if (document.body.classList.contains('col-dragging-active')) return;
+    e.preventDefault();
+    el.classList.remove('dragover');
+    const cardId = e.dataTransfer.getData('text/card-id');
+    if (!cardId) return;
+    const card = state.cards.find(c => c.id === cardId);
+    if (!card || card.column === col.id) return;
+    pushUndo();
+    card.column = col.id;
+    card.updatedAt = now();
+    if (col.id === 'done' && !card.doneAt) card.doneAt = card.updatedAt;
+    if (col.id !== 'done') card.doneAt = null;
+    scheduleSave(); render();
+  });
+
+  const hdr = document.createElement('div');
+  hdr.className = 'column-header';
+
+  // Grip handle — the drag affordance. Whole-column draggable would
+  // conflict with card drag inside; gating draggability to the grip
+  // (mousedown enables draggable, mouseup/dragend disables) keeps cards
+  // independently draggable.
+  const grip = document.createElement('span');
+  grip.className = 'grip';
+  grip.textContent = '⋮⋮';
+  grip.title = 'Drag to reorder · drop on 🗑 to delete';
+  grip.addEventListener('mousedown', () => { el.draggable = true; });
+  grip.addEventListener('mouseup',   () => { el.draggable = false; });
+  hdr.appendChild(grip);
+
+  const nameEl = document.createElement('span');
+  nameEl.className = 'name';
+  nameEl.contentEditable = 'true';
+  nameEl.textContent = col.name;
+  armUndoOnFocus(nameEl);
+  nameEl.addEventListener('blur', () => {
+    const v = nameEl.textContent.trim();
+    if (v && v !== col.name) { col.name = v; scheduleSave(); }
+    else nameEl.textContent = col.name;
+  });
+  nameEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); } });
+  hdr.appendChild(nameEl);
+
+  const count = document.createElement('span');
+  count.className = 'count';
+  count.textContent = cards.length;
+  hdr.appendChild(count);
+
+  // Always-on × for CUSTOM columns (was: empty-only). Confirm if it has
+  // cards — they'd otherwise be orphaned in state but invisible on board.
+  if (col.kind === 'custom') {
+    const del = document.createElement('button');
+    del.className = 'icon-btn del-btn';
+    del.textContent = '×';
+    del.title = 'Delete column';
+    del.onclick = async () => {
+      const sub = cards.length
+        ? `Delete "${col.name}" — ${cards.length} card(s) → Backlog`
+        : `Delete column "${col.name}"`;
+      if (!(await miniConfirm('Confirm?', { sub }))) return;
+      deleteColumn(col.id);
+    };
+    hdr.appendChild(del);
+  }
+
+  // Column-reorder drag (FLIP technique — record start rects, mutate state,
+  // re-render, then animate from old→new positions for an iPhone-rearrange
+  // smoothness instead of a teleport.)
+  el.addEventListener('dragstart', e => {
+    if (!el.draggable) { e.preventDefault(); return; } // only when grip-armed
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/col-id', col.id);
+    el.classList.add('col-dragging');
+    document.body.classList.add('col-dragging-active');
+    _colDragRects = captureColumnRects();
+  });
+  el.addEventListener('dragend', () => {
+    el.draggable = false;
+    el.classList.remove('col-dragging');
+    document.body.classList.remove('col-dragging-active');
+    document.querySelectorAll('.column').forEach(c => c.classList.remove('col-drop-target'));
+    _colDragRects = null;
+  });
+  // Reorder on drop onto another column's edge
+  el.addEventListener('dragover', e => {
+    const draggingColId = (e.dataTransfer.types || []).includes('text/col-id');
+    if (!draggingColId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  });
+  el.addEventListener('drop', e => {
+    const srcId = e.dataTransfer.getData('text/col-id');
+    if (!srcId || srcId === col.id) return;
+    e.preventDefault();
+    reorderColumn(srcId, col.id);
+  });
+
+  el.appendChild(hdr);
+
+  const body = document.createElement('div');
+  body.className = 'column-body';
+
+  // Filter-aware count: how many of this column's cards will actually render
+  // given _tagFilter / _columnFilter? Show a "+ N hidden by filter" note so
+  // it's obvious where the cards went.
+  if (_tagFilter.size || _columnFilter.size) {
+    const visible = cards.filter(c => {
+      if (_tagFilter.size && !(c.tags || []).some(t => _tagFilter.has(t))) return false;
+      if (_columnFilter.size && !_columnFilter.has(c.column)) return false;
+      return true;
+    }).length;
+    const hidden = cards.length - visible;
+    if (hidden > 0) {
+      const note = document.createElement('div');
+      note.className = 'col-filtered-note';
+      note.textContent = `${hidden} hidden by filter`;
+      body.appendChild(note);
+    }
+  }
+
+  if (col.id === 'done') {
+    // Group by doneAt LOCAL date (not UTC) so a SGT-evening done event
+    // doesn't get binned under the previous UTC day.
+    const groups = {};
+    cards.forEach(c => {
+      const src = c.doneAt || c.updatedAt || c.createdAt;
+      const day = src ? localYmd(src) : 'unknown';
+      (groups[day] = groups[day] || []).push(c);
+    });
+    Object.keys(groups).sort().reverse().forEach(day => {
+      const hdr = document.createElement('div');
+      hdr.className = 'day-header';
+      const lbl = document.createElement('span');
+      lbl.textContent = formatDayHeader(day);
+      hdr.appendChild(lbl);
+      const ct = document.createElement('span');
+      ct.className = 'day-count';
+      ct.textContent = groups[day].length;
+      hdr.appendChild(ct);
+      body.appendChild(hdr);
+      groups[day].forEach(card => body.appendChild(renderCardCompact(card)));
+    });
+  } else {
+    const sortable = col.id !== 'ideas';
+    const PRIO_RANK = { critical: 0, mid: 1, low: 2 };
+    const ordered = sortable
+      ? cards.slice().sort((a, b) => (PRIO_RANK[a.priority] ?? 3) - (PRIO_RANK[b.priority] ?? 3))
+      : cards;
+    ordered.forEach(card => body.appendChild(renderCardCompact(card)));
+  }
+  el.appendChild(body);
+
+  const addBtn = document.createElement('button');
+  addBtn.className = 'add-card-btn';
+  addBtn.textContent = col.id === 'ideas' ? '+ Add idea' : '+ Add card';
+  addBtn.onclick = () => {
+    const n = (state.nextNum || 1);
+    state.nextNum = n + 1;
+    const card = {
+      num: n,
+      id: uid('c'),
+      code: '',
+      priority: null,
+      title: 'New ' + (col.id === 'ideas' ? 'idea' : 'card'),
+      column: col.id,
+      tags: [],
+      notes: '',
+      writeup: '',
+      createdAt: now(),
+      updatedAt: now(),
+      doneAt: col.id === 'done' ? now() : null,
+      subtasks: []
+    };
+    state.cards.push(card);
+    scheduleSave();
+    openModal(card.id);
+  };
+  el.appendChild(addBtn);
+
+  return el;
+}
+
+// ===== SSE: live event stream from serve.py /events =====
+// Server diffs every POST /board.json against the prior cached state and
+// broadcasts per-card / per-column events. We update state in place and
+// apply incremental DOM ops with animations — no full re-render.
+//
+// Polling (startPoll) stays as a safety net for missed events / SSE drops.
+
+let _es = null;
+let _sseConnected = false;
+
+function cssEsc(s) {
+  // CSS.escape exists everywhere modern; fallback for paranoia.
+  if (window.CSS && CSS.escape) return CSS.escape(s);
+  return (s || '').replace(/[^a-zA-Z0-9_-]/g, c => '\\' + c);
+}
+
+function findCardEl(id)    { return document.querySelector(`.card[data-card-id="${cssEsc(id)}"]`); }
+function findColumnEl(id)  { return document.querySelector(`.column[data-col="${cssEsc(id)}"]`); }
+function refreshColumnCount(colId) {
+  const ct = document.querySelector(`.column[data-col="${cssEsc(colId)}"] .count`);
+  if (ct && state) ct.textContent = state.cards.filter(c => c.column === colId).length;
+}
+
+function handleCardAdded({ card }) {
+  if (!state) return;
+  const existing = state.cards.find(c => c.id === card.id);
+  if (existing) Object.assign(existing, card);
+  else { state.cards.push(card); state.nextNum = Math.max(state.nextNum || 0, (card.num || 0) + 1); }
+  if (_view !== 'board') return;
+  if (findCardEl(card.id)) return;          // race with poll — already in DOM
+
+  const col = findColumnEl(card.column);
+  if (!col) { render(); return; }            // column unknown — fall back to full
+  const body = col.querySelector('.column-body');
+  if (!body) { render(); return; }
+
+  const el = renderCardCompact(card);
+  el.classList.add('popping-in');
+  // Done column groups by day-header; easiest: append to body, full render
+  // will regroup on next poll. For Ideas/Backlog/InProgress/Blocked: append.
+  body.appendChild(el);
+  el.addEventListener('animationend', () => el.classList.remove('popping-in'), { once: true });
+  refreshColumnCount(card.column);
+}
+
+function handleCardUpdated({ card, fromColumn, toColumn }) {
+  if (!state) return;
+  const idx = state.cards.findIndex(c => c.id === card.id);
+  if (idx >= 0) Object.assign(state.cards[idx], card);
+  else { state.cards.push(card); }
+  if (_view !== 'board') return;
+
+  const oldEl = findCardEl(card.id);
+  if (!oldEl) { handleCardAdded({ card }); return; }
+
+  if (fromColumn && toColumn && fromColumn !== toColumn) {
+    // FLIP — measure, move, invert, play
+    const first = oldEl.getBoundingClientRect();
+    oldEl.remove();
+    const target = findColumnEl(toColumn);
+    if (!target) { render(); return; }
+    const body = target.querySelector('.column-body');
+    const newEl = renderCardCompact(card);
+    body.appendChild(newEl);
+    const last = newEl.getBoundingClientRect();
+    const dx = first.left - last.left;
+    const dy = first.top  - last.top;
+    if (dx || dy) {
+      newEl.animate(
+        [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' }],
+        { duration: 320, easing: 'cubic-bezier(0.34, 1.56, 0.64, 1)', fill: 'both' }
+      );
+    }
+    refreshColumnCount(fromColumn);
+    refreshColumnCount(toColumn);
+  } else {
+    // In-place edit (title/priority/tags/subtask) — swap DOM, pulse + flash.
+    const newEl = renderCardCompact(card);
+    newEl.classList.add('flashing', 'pulsing');
+    oldEl.replaceWith(newEl);
+    setTimeout(() => newEl.classList.remove('flashing','pulsing'), 1300);
+  }
+}
+
+function handleCardRemoved({ id }) {
+  if (!state) return;
+  state.cards = state.cards.filter(c => c.id !== id);
+  const el = findCardEl(id);
+  if (!el) return;
+  const colId = el.dataset.col;
+  el.classList.add('removing');
+  el.addEventListener('animationend', () => {
+    el.remove();
+    refreshColumnCount(colId);
+  }, { once: true });
+}
+
+function handleColumnAdded({ column, index }) {
+  if (!state) return;
+  if (!state.columns.find(c => c.id === column.id)) {
+    state.columns.splice(typeof index === 'number' ? index : state.columns.length, 0, column);
+  }
+  if (_view !== 'board') return;
+  if (findColumnEl(column.id)) return;
+
+  const boardEl = $('#board');
+  const addBtn = boardEl.querySelector('.col-add-btn');
+  const newCol = renderColumn(column, []);
+  newCol.classList.add('sliding-in');
+  if (addBtn) boardEl.insertBefore(newCol, addBtn);
+  else boardEl.appendChild(newCol);
+  newCol.addEventListener('animationend', () => newCol.classList.remove('sliding-in'), { once: true });
+}
+
+function handleColumnRemoved({ id }) {
+  if (!state) return;
+  state.columns = state.columns.filter(c => c.id !== id);
+  const el = findColumnEl(id);
+  if (!el) return;
+  el.style.transition = 'opacity 200ms ease, max-width 300ms ease';
+  el.style.opacity = '0';
+  el.style.maxWidth = '0';
+  setTimeout(() => el.remove(), 320);
+}
+
+function handleColumnRenamed({ id, name }) {
+  const col = state && state.columns.find(c => c.id === id);
+  if (col) col.name = name;
+  const nameEl = document.querySelector(`.column[data-col="${cssEsc(id)}"] .name`);
+  if (nameEl && nameEl.textContent !== name) nameEl.textContent = name;
+}
+
+function handleRevBumped({ rev, savedBy, savedAt }) {
+  if (!state) return;
+  state.rev = rev;
+  state.savedBy = savedBy;
+  state.savedAt = savedAt;
+  lastRev = rev;
+  // Cancel imminent poll since we have fresh data
+  suppressPollUntil = Date.now() + 2000;
+  setStatus('live');
+}
+
+function startSSE() {
+  if (!window.EventSource) return;             // very old browser — polling will cover it
+  try { _es && _es.close(); } catch (_) {}
+  _es = new EventSource('/events');
+  _es.addEventListener('open', () => {
+    _sseConnected = true;
+    setStatus('live');
+  });
+  _es.addEventListener('card-added',     e => handleCardAdded(JSON.parse(e.data)));
+  _es.addEventListener('card-updated',   e => handleCardUpdated(JSON.parse(e.data)));
+  _es.addEventListener('card-removed',   e => handleCardRemoved(JSON.parse(e.data)));
+  _es.addEventListener('column-added',   e => handleColumnAdded(JSON.parse(e.data)));
+  _es.addEventListener('column-removed', e => handleColumnRemoved(JSON.parse(e.data)));
+  _es.addEventListener('column-renamed', e => handleColumnRenamed(JSON.parse(e.data)));
+  _es.addEventListener('rev-bumped',     e => handleRevBumped(JSON.parse(e.data)));
+  _es.onerror = () => {
+    // Browser auto-reconnects; just downgrade status badge.
+    if (_sseConnected) setStatus('reconnecting…', 'unsynced');
+    _sseConnected = false;
+  };
+}
+
+// ===== Init =====
+async function init() {
+  // Close modal: ESC or click on overlay backdrop
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      if (_openCardId) closeModal();
+      else if (_tagLegendOpen) toggleTagLegend(false);
+      return;
+    }
+    // Ctrl/Cmd+Z = undo · Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y = redo.
+    // Intercepts globally (including inside textareas/contentEditables) so
+    // structural changes (column move, delete, etc.) can be undone from
+    // anywhere on the board.
+    const meta = e.metaKey || e.ctrlKey;
+    if (!meta) return;
+    const k = e.key.toLowerCase();
+    if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+    else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); redo(); }
+  });
+  $('#modal-overlay').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeModal();
+  });
+
+  // Tag legend: header pill toggles, click-outside closes, clear-filter resets
+  $('#tags-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    toggleTagLegend();
+  });
+  $('#tag-clear').addEventListener('click', e => {
+    e.stopPropagation();
+    _tagFilter.clear();
+    _columnFilter.clear();
+    refreshTagLegend();
+    render();
+  });
+  // Outside-click closes popover. Use mousedown (fires BEFORE click) so the
+  // closest() check runs while the clicked chip is still attached to DOM.
+  // If we waited for click, refreshTagLegend() would have already wiped the
+  // popover body, detaching the chip — closest() returns null — and the
+  // handler would incorrectly close the popover. (User can't filter
+  // multiple things without reopening.)
+  document.addEventListener('mousedown', e => {
+    if (!_tagLegendOpen) return;
+    if (e.target.closest('#tag-legend') || e.target.closest('#tags-btn')) return;
+    toggleTagLegend(false);
+  });
+
+  initTooltipDelegation();
+
+  document.querySelectorAll('#view-toggle button').forEach(b => {
+    b.onclick = () => setView(b.dataset.view);
+  });
+
+  // Trash drop-zone (visible only while a column is being dragged).
+  const trash = $('#col-trash');
+  trash.addEventListener('dragover', e => {
+    if (!(e.dataTransfer.types || []).includes('text/col-id')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    trash.classList.add('over');
+  });
+  trash.addEventListener('dragleave', () => trash.classList.remove('over'));
+  trash.addEventListener('drop', async e => {
+    const id = e.dataTransfer.getData('text/col-id');
+    trash.classList.remove('over');
+    if (!id) return;
+    e.preventDefault();
+    const col = state.columns.find(c => c.id === id);
+    if (!col) return;
+    if (col.kind !== 'custom') {
+      toast(`"${col.name}" is a default column — can't delete`);
+      return;
+    }
+    const cardCount = state.cards.filter(c => c.column === id).length;
+    const sub = cardCount
+      ? `Delete "${col.name}" — ${cardCount} card(s) → Backlog`
+      : `Delete column "${col.name}"`;
+    if (!(await miniConfirm('Confirm?', { sub }))) return;
+    deleteColumn(id);
+  });
+
+  setInterval(tickTimes, 15000);
+
+  // Show where we're fetching from (helps user debug if server isn't up).
+  const setupUrl = $('#setup-url');
+  if (setupUrl) setupUrl.textContent = location.origin + BOARD_URL;
+
+  try {
+    await loadFromFile();
+    enterApp();
+    startSSE();
+    startPoll();
+  } catch (e) {
+    $('#setup-err').textContent =
+      'Could not reach board server: ' + (e.message || e) +
+      '. Run `board-steward serve` (or `python ~/.claude/skills/board-steward/scripts/serve.py`) from the project directory.';
+  }
+}
+
+init();
+</script>
+</body>
+</html>

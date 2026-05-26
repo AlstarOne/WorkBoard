@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local board data — don't ship user boards in the skill repo
+board/
+*.local.json
+
+# Telemetry logs (regenerate per install)
+telemetry/events.jsonl

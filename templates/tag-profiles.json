@@ -1,0 +1,128 @@
+{
+  "_doc": "Industry profiles for board-steward tag taxonomy. Each profile = max 10 main + max 15 sub tags with semantic colors. board.json picks one via tagTaxonomy.profile. Default = software.",
+  "_caps": { "main": 10, "sub": 15 },
+
+  "software": {
+    "main": [
+      { "name": "bug",      "color": "#C84B4B" },
+      { "name": "feature",  "color": "#5A9F7A" },
+      { "name": "infra",    "color": "#4A7BA5" },
+      { "name": "security", "color": "#8B3A3A" },
+      { "name": "perf",     "color": "#D97757" },
+      { "name": "ui",       "color": "#C97A9A" },
+      { "name": "docs",     "color": "#8B8680" },
+      { "name": "refactor", "color": "#9B7AB5" }
+    ],
+    "sub": [
+      { "name": "shipped",       "color": "#3D8F65" },
+      { "name": "deferred",      "color": "#9C8B6B" },
+      { "name": "discuss-first", "color": "#BFA661" },
+      { "name": "aging",         "color": "#B8956C" },
+      { "name": "stress-test",   "color": "#4FA5A5" },
+      { "name": "test",          "color": "#6FA5C8" },
+      { "name": "deploy",        "color": "#2D7A52" },
+      { "name": "staging",       "color": "#5C7CB8" },
+      { "name": "correctness",   "color": "#7A6FB5" },
+      { "name": "verify",        "color": "#5FA59A" },
+      { "name": "dependency",    "color": "#B8965C" },
+      { "name": "breaking",      "color": "#A03030" }
+    ]
+  },
+
+  "marketing": {
+    "main": [
+      { "name": "campaign",  "color": "#D97757" },
+      { "name": "content",   "color": "#5A9F7A" },
+      { "name": "social",    "color": "#5C7CB8" },
+      { "name": "email",     "color": "#7A6FB5" },
+      { "name": "seo",       "color": "#4FA5A5" },
+      { "name": "paid",      "color": "#BFA661" },
+      { "name": "brand",     "color": "#C97A9A" },
+      { "name": "analytics", "color": "#4A7BA5" }
+    ],
+    "sub": [
+      { "name": "launch",        "color": "#3D8F65" },
+      { "name": "partnership",   "color": "#9B7AB5" },
+      { "name": "influencer",    "color": "#C97A9A" },
+      { "name": "copy",          "color": "#8B8680" },
+      { "name": "design",        "color": "#D97757" },
+      { "name": "ab-test",       "color": "#6FA5C8" },
+      { "name": "retargeting",   "color": "#5FA59A" },
+      { "name": "lifecycle",     "color": "#B8956C" },
+      { "name": "conversion",    "color": "#5A9F7A" },
+      { "name": "viral",         "color": "#C84B4B" }
+    ]
+  },
+
+  "research": {
+    "main": [
+      { "name": "experiment",   "color": "#D97757" },
+      { "name": "paper",        "color": "#8B8680" },
+      { "name": "dataset",      "color": "#4A7BA5" },
+      { "name": "model",        "color": "#9B7AB5" },
+      { "name": "analysis",     "color": "#5A9F7A" },
+      { "name": "lit-review",   "color": "#BFA661" },
+      { "name": "presentation", "color": "#C97A9A" }
+    ],
+    "sub": [
+      { "name": "hyperparam",     "color": "#5C7CB8" },
+      { "name": "baseline",      "color": "#6FA5C8" },
+      { "name": "ablation",      "color": "#4FA5A5" },
+      { "name": "reproducibility","color": "#5FA59A" },
+      { "name": "ethics",        "color": "#8B3A3A" },
+      { "name": "citation",      "color": "#9C8B6B" },
+      { "name": "code",          "color": "#3D8F65" },
+      { "name": "supplementary", "color": "#B8956C" },
+      { "name": "review",        "color": "#7A6FB5" },
+      { "name": "submission",    "color": "#C84B4B" }
+    ]
+  },
+
+  "product": {
+    "main": [
+      { "name": "discovery",   "color": "#BFA661" },
+      { "name": "roadmap",     "color": "#4A7BA5" },
+      { "name": "research",    "color": "#9B7AB5" },
+      { "name": "spec",        "color": "#8B8680" },
+      { "name": "stakeholder", "color": "#C97A9A" },
+      { "name": "metrics",     "color": "#5A9F7A" },
+      { "name": "pricing",     "color": "#D97757" }
+    ],
+    "sub": [
+      { "name": "interview",   "color": "#6FA5C8" },
+      { "name": "prototype",   "color": "#5FA59A" },
+      { "name": "churn",       "color": "#C84B4B" },
+      { "name": "retention",   "color": "#5A9F7A" },
+      { "name": "onboarding",  "color": "#4FA5A5" },
+      { "name": "north-star",  "color": "#BFA661" },
+      { "name": "hypothesis",  "color": "#7A6FB5" },
+      { "name": "validation",  "color": "#3D8F65" },
+      { "name": "beta",        "color": "#5C7CB8" },
+      { "name": "kill",        "color": "#8B3A3A" }
+    ]
+  },
+
+  "operations": {
+    "main": [
+      { "name": "budget",     "color": "#5A9F7A" },
+      { "name": "forecast",   "color": "#4A7BA5" },
+      { "name": "process",    "color": "#8B8680" },
+      { "name": "compliance", "color": "#8B3A3A" },
+      { "name": "vendor",     "color": "#BFA661" },
+      { "name": "hiring",     "color": "#C97A9A" },
+      { "name": "tooling",    "color": "#D97757" }
+    ],
+    "sub": [
+      { "name": "invoice",        "color": "#9C8B6B" },
+      { "name": "audit",          "color": "#7A6FB5" },
+      { "name": "reconciliation", "color": "#5FA59A" },
+      { "name": "contract",       "color": "#6FA5C8" },
+      { "name": "renewal",        "color": "#5C7CB8" },
+      { "name": "training",       "color": "#4FA5A5" },
+      { "name": "policy",         "color": "#9B7AB5" },
+      { "name": "incident",       "color": "#C84B4B" },
+      { "name": "sla",            "color": "#B8956C" },
+      { "name": "report",         "color": "#3D8F65" }
+    ]
+  }
+}
