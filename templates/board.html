@@ -298,6 +298,22 @@
     height: calc(100% - 48px);
     align-items: flex-start;
   }
+  /* #117 — vertical stack wrapper. One wrapper per stack root; the root
+     and all its stackUnder descendants live inside, stacked top→bottom. */
+  .column-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-self: flex-start;
+    flex-shrink: 0;
+    max-height: 100%;
+  }
+  /* Bottom-40% drop-hint: when dragging a column over the lower half of a
+     target column, show a dashed bottom edge that says "drop to stack". */
+  .column.col-drop-stack-target {
+    box-shadow: inset 0 -4px 0 0 var(--accent), inset 0 0 0 2px var(--accent);
+    background: #F1E9DF;
+  }
   .column {
     background: var(--col-bg);
     border: 1px solid var(--card-border);
@@ -1224,8 +1240,31 @@ function reorderColumn(srcId, targetId) {
   if (si < 0 || ti < 0 || si === ti) return;
   pushUndo();
   const old = _colDragRects;       // captured at dragstart
+  const src = cols[si];
+  // Reordering implies "back to top-level row" — if src was stacked, free it.
+  if (src.stackUnder) src.stackUnder = null;
   const [moved] = cols.splice(si, 1);
   cols.splice(ti, 0, moved);
+  scheduleSave();
+  render();
+  requestAnimationFrame(() => flipPlayColumns(old));
+}
+
+// #117 — stack `srcId` directly under `parentId`. Refuses to create a cycle
+// (parent must not be a descendant of src) and refuses self-parent.
+function stackColumnUnder(srcId, parentId) {
+  if (!state || srcId === parentId) return;
+  const cols = state.columns;
+  const src = cols.find(c => c.id === srcId);
+  const parent = cols.find(c => c.id === parentId);
+  if (!src || !parent) return;
+  // Cycle guard: walk parent's descendants; if src appears, refuse.
+  const descendantOfSrc = walkStack(srcId).some(c => c.id === parentId);
+  if (descendantOfSrc) { toast('Cycle blocked'); return; }
+  if (src.stackUnder === parentId) return;  // no-op
+  pushUndo();
+  const old = _colDragRects;
+  src.stackUnder = parentId;
   scheduleSave();
   render();
   requestAnimationFrame(() => flipPlayColumns(old));
@@ -2294,9 +2333,18 @@ function render() {
   if (_view === 'board') {
     const board = $('#board');
     board.innerHTML = '';
-    state.columns.forEach(col => {
-      const cards = state.cards.filter(c => c.column === col.id);
-      board.appendChild(renderColumn(col, cards));
+    // #117 — render in stacks: one .column-stack wrapper per root, containing
+    // the root + all stackUnder descendants in walk order. Single-column
+    // "stacks" still get a wrapper so the layout is uniform.
+    getStackRoots().forEach(root => {
+      const wrap = document.createElement('div');
+      wrap.className = 'column-stack';
+      wrap.dataset.stackRoot = root.id;
+      walkStack(root.id).forEach(col => {
+        const cards = state.cards.filter(c => c.column === col.id);
+        wrap.appendChild(renderColumn(col, cards));
+      });
+      board.appendChild(wrap);
     });
     const addCol = document.createElement('button');
     addCol.className = 'col-add-btn';
@@ -2932,21 +2980,35 @@ function renderColumn(col, cards) {
     el.draggable = false;
     el.classList.remove('col-dragging');
     document.body.classList.remove('col-dragging-active');
-    document.querySelectorAll('.column').forEach(c => c.classList.remove('col-drop-target'));
+    document.querySelectorAll('.column').forEach(c => {
+      c.classList.remove('col-drop-target');
+      c.classList.remove('col-drop-stack-target');
+    });
     _colDragRects = null;
   });
-  // Reorder on drop onto another column's edge
+  // Reorder on drop onto another column's edge. #117: if drop lands in the
+  // BOTTOM 40% of the target column, stack the source UNDER the target
+  // instead of doing a flat reorder. TOP 60% (or any side overlap) keeps
+  // the existing flat-row behavior.
+  function _inStackZone(e) {
+    const r = el.getBoundingClientRect();
+    return r.height > 0 && (e.clientY - r.top) > r.height * 0.6;
+  }
   el.addEventListener('dragover', e => {
     const draggingColId = (e.dataTransfer.types || []).includes('text/col-id');
     if (!draggingColId) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
+    if (_inStackZone(e)) el.classList.add('col-drop-stack-target');
+    else el.classList.remove('col-drop-stack-target');
   });
   el.addEventListener('drop', e => {
     const srcId = e.dataTransfer.getData('text/col-id');
+    el.classList.remove('col-drop-stack-target');
     if (!srcId || srcId === col.id) return;
     e.preventDefault();
-    reorderColumn(srcId, col.id);
+    if (_inStackZone(e)) stackColumnUnder(srcId, col.id);
+    else reorderColumn(srcId, col.id);
   });
 
   el.appendChild(hdr);
