@@ -2,22 +2,26 @@
 """
 install_hooks.py — idempotently wire board-steward hooks into Claude Code settings.
 
-Why: SKILL.md v1-v4 documented hooks as "opt-in copy-pasteable snippets." Nobody
-installed them. The board then silently drifts during long active-coding sessions
-(see card #84). This script makes hook installation a one-line step every new
-user can run after `pip install` / `git clone`.
+By default, installs a SessionStart hook (fires once per Claude session, injects
+a tight digest into context). This is the recommended primitive — fires reliably
+regardless of CWD/first-prompt timing, and doesn't bleed tokens on every prompt.
+
+The older UserPromptSubmit hook is still available (--hook user-prompt-submit)
+for users who want per-prompt protocol nudges. `--hook both` installs both.
 
 Usage:
-    install_hooks.py              # install (idempotent)
-    install_hooks.py --dry-run    # show diff, don't write
-    install_hooks.py --uninstall  # remove our hook entry
-    install_hooks.py --status     # report current install state
+    install_hooks.py                              # install SessionStart (recommended)
+    install_hooks.py --hook user-prompt-submit    # legacy per-prompt hook
+    install_hooks.py --hook both                  # install both
+    install_hooks.py --dry-run
+    install_hooks.py --uninstall                  # remove ALL board-steward hooks
+    install_hooks.py --status                     # report current state
 
 Resolves its own location via __file__, so the hook command path in
 settings.json points to wherever the skill happens to live on this machine.
-No hardcoded /Users/* anywhere.
 
-Safe to run repeatedly — detects existing entries by command-path match.
+Safe to run repeatedly — flips the configured set to match --hook by
+adding selected variants and removing unselected ones.
 """
 from __future__ import annotations
 import argparse
@@ -29,20 +33,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-HOOK_SCRIPT_NAME = "hook_user_prompt.sh"
-HOOK_EVENT = "UserPromptSubmit"
+HOOK_VARIANTS = {
+    "session-start":      ("SessionStart",      "hook_session_start.sh"),
+    "user-prompt-submit": ("UserPromptSubmit",  "hook_user_prompt.sh"),
+}
+ALL_VARIANTS = tuple(HOOK_VARIANTS.keys())
 
 
 def claude_settings_path() -> Path:
-    """Resolve Claude Code's user settings.json — honors $CLAUDE_CONFIG_DIR."""
     env_dir = os.environ.get("CLAUDE_CONFIG_DIR")
     base = Path(env_dir) if env_dir else Path.home() / ".claude"
     return base / "settings.json"
 
 
-def hook_command() -> str:
-    """Absolute path to our hook script, computed at install-time."""
-    return str((Path(__file__).resolve().parent / HOOK_SCRIPT_NAME).resolve())
+def hook_command(script_name: str) -> str:
+    return str((Path(__file__).resolve().parent / script_name).resolve())
 
 
 def load_settings(path: Path) -> dict:
@@ -54,9 +59,8 @@ def load_settings(path: Path) -> dict:
         sys.exit(f"refusing to touch malformed settings.json ({path}): {e}")
 
 
-def find_existing(settings: dict, cmd: str) -> tuple[int, int] | None:
-    """Return (group_idx, hook_idx) of our entry, or None."""
-    hooks = settings.get("hooks", {}).get(HOOK_EVENT, [])
+def find_existing(settings: dict, event: str, cmd: str) -> tuple[int, int] | None:
+    hooks = settings.get("hooks", {}).get(event, [])
     for gi, group in enumerate(hooks):
         for hi, hook in enumerate(group.get("hooks", [])):
             if hook.get("type") == "command" and hook.get("command") == cmd:
@@ -64,21 +68,18 @@ def find_existing(settings: dict, cmd: str) -> tuple[int, int] | None:
     return None
 
 
-def install(settings: dict, cmd: str) -> tuple[dict, str]:
-    """Return (new_settings, action). Idempotent."""
-    existing = find_existing(settings, cmd)
-    if existing is not None:
-        return settings, "already-installed"
-
-    settings.setdefault("hooks", {}).setdefault(HOOK_EVENT, []).append({
+def add_hook(settings: dict, event: str, cmd: str) -> str:
+    if find_existing(settings, event, cmd) is not None:
+        return "already-installed"
+    settings.setdefault("hooks", {}).setdefault(event, []).append({
         "matcher": "",
         "hooks": [{"type": "command", "command": cmd}],
     })
-    return settings, "installed"
+    return "installed"
 
 
-def uninstall(settings: dict, cmd: str) -> tuple[dict, str]:
-    hooks = settings.get("hooks", {}).get(HOOK_EVENT, [])
+def remove_hook(settings: dict, event: str, cmd: str) -> str:
+    hooks = settings.get("hooks", {}).get(event, [])
     removed = False
     new_groups = []
     for group in hooks:
@@ -88,15 +89,15 @@ def uninstall(settings: dict, cmd: str) -> tuple[dict, str]:
             removed = True
         if new_hooks:
             new_groups.append({**group, "hooks": new_hooks})
-    if removed:
-        if new_groups:
-            settings["hooks"][HOOK_EVENT] = new_groups
-        else:
-            settings["hooks"].pop(HOOK_EVENT, None)
-            if not settings["hooks"]:
-                settings.pop("hooks", None)
-        return settings, "uninstalled"
-    return settings, "not-installed"
+    if not removed:
+        return "not-installed"
+    if new_groups:
+        settings["hooks"][event] = new_groups
+    else:
+        settings["hooks"].pop(event, None)
+        if not settings["hooks"]:
+            settings.pop("hooks", None)
+    return "uninstalled"
 
 
 def atomic_write(path: Path, data: dict) -> None:
@@ -115,53 +116,79 @@ def backup(path: Path) -> Path | None:
     return bk
 
 
-def cmd_status(args) -> int:
+def cmd_status() -> int:
     path = claude_settings_path()
-    cmd = hook_command()
-    print(f"settings.json: {path} {'(exists)' if path.exists() else '(missing)'}")
-    print(f"hook script:   {cmd}")
-    print(f"hook script exists+executable: {Path(cmd).exists() and os.access(cmd, os.X_OK)}")
     settings = load_settings(path)
-    if find_existing(settings, cmd):
-        print("STATUS: ✓ INSTALLED")
-        return 0
-    print("STATUS: ✗ NOT INSTALLED — run `install_hooks.py` to wire it up.")
-    return 1
+    print(f"settings.json: {path} {'(exists)' if path.exists() else '(missing)'}")
+    any_installed = False
+    for name, (event, script) in HOOK_VARIANTS.items():
+        cmd = hook_command(script)
+        exists = Path(cmd).exists() and os.access(cmd, os.X_OK)
+        installed = find_existing(settings, event, cmd) is not None
+        marker = "✓" if installed else "✗"
+        print(f"  {marker} {name:22s}  event={event:18s}  script_ok={exists}  installed={installed}")
+        if installed:
+            any_installed = True
+    return 0 if any_installed else 1
+
+
+def apply_selection(settings: dict, selected: set[str]) -> tuple[dict, list[str]]:
+    log = []
+    for name, (event, script) in HOOK_VARIANTS.items():
+        cmd = hook_command(script)
+        if name in selected:
+            if not Path(cmd).exists():
+                sys.exit(f"hook script missing at {cmd} — re-install the skill, then retry")
+            action = add_hook(settings, event, cmd)
+        else:
+            action = remove_hook(settings, event, cmd)
+        log.append(f"  {name:22s} → {action}")
+    return settings, log
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--dry-run", action="store_true", help="show what would change; don't write")
-    ap.add_argument("--uninstall", action="store_true", help="remove the hook entry")
-    ap.add_argument("--status", action="store_true", help="report current state")
-    ap.add_argument("--no-backup", action="store_true", help="skip the .bak-<ts> snapshot")
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ap.add_argument("--hook", choices=("session-start", "user-prompt-submit", "both"),
+                    default="session-start",
+                    help="which hook(s) to install (default: session-start)")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--uninstall", action="store_true", help="remove ALL board-steward hooks")
+    ap.add_argument("--status", action="store_true")
+    ap.add_argument("--no-backup", action="store_true")
     args = ap.parse_args()
 
     if args.status:
-        return cmd_status(args)
+        return cmd_status()
 
     path = claude_settings_path()
-    cmd = hook_command()
-
-    if not Path(cmd).exists():
-        sys.exit(f"hook script missing at {cmd} — re-install the skill, then retry")
-
     settings = load_settings(path)
+
     if args.uninstall:
-        new_settings, action = uninstall(settings, cmd)
+        selected: set[str] = set()
+    elif args.hook == "both":
+        selected = set(ALL_VARIANTS)
     else:
-        new_settings, action = install(settings, cmd)
+        selected = {args.hook}
+
+    new_settings, log = apply_selection(settings, selected)
+    any_change = any(("installed" in line and "already" not in line) or "uninstalled" in line
+                     for line in log)
 
     if args.dry_run:
-        print(f"DRY-RUN: action={action}")
-        print(f"  settings.json: {path}")
-        print(f"  hook command:  {cmd}")
-        print("--- would-be contents ---")
+        print(f"DRY-RUN: target selection = {sorted(selected) or 'NONE (uninstall)'}")
+        for line in log:
+            print(line)
+        print("--- would-be settings.json ---")
         print(json.dumps(new_settings, indent=2))
         return 0
 
-    if action in ("already-installed", "not-installed"):
-        print(f"no-op ({action}) — {path}")
+    if not any_change:
+        print(f"no-op (state already matches request) — {path}")
+        for line in log:
+            print(line)
         return 0
 
     if not args.no_backup and path.exists():
@@ -169,9 +196,10 @@ def main() -> int:
         if bk:
             print(f"backup: {bk}")
     atomic_write(path, new_settings)
-    print(f"{action} hook → {path}")
-    print(f"  command: {cmd}")
-    print("(restart any open Claude Code session to pick up the new hook)")
+    print(f"updated → {path}")
+    for line in log:
+        print(line)
+    print("(restart any open Claude Code session to pick up the change)")
     return 0
 
 
