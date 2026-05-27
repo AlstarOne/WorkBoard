@@ -2529,7 +2529,11 @@ function enterApp() {
 // activity desc (empty columns last). Clears stackUnder. One undo entry.
 async function resetColumnsToDefault() {
   if (!state) return;
-  if (!(await miniConfirm('Reset column order?', { sub: 'Task → Backlog → In Progress → Done → Notes, then others by recency. Clears any column stacks.' }))) return;
+  if (!(await miniConfirm('Reset column order?', {
+    sub: 'Reorders columns to: Task → Backlog → In Progress → Done → Notes, then the rest by latest activity. Also flattens any stacked columns back into a row. No cards or columns are deleted.',
+    okText: 'Reset',
+    okClass: 'primary',
+  }))) return;
   pushUndo();
   const cols = state.columns.map(c => ({ ...c, stackUnder: null }));
   const matchers = [
