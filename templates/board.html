@@ -2156,7 +2156,7 @@ function applyBoardTitle() {
   const el = $('#board-title');
   if (!el || !state) return;
   if (el.dataset.editing === '1') return; // don't clobber mid-edit
-  const t = (state.title || '').trim() || 'Work Board';
+  const t = (state.title || '').trim() || 'WorkBoard';
   el.textContent = t;
   document.title = t;
 }
@@ -2176,7 +2176,7 @@ function wireBoardTitle() {
     pushUndo();
     el.dataset.editing = '1';
     el.contentEditable = 'true';
-    el.textContent = (state && state.title) ? state.title : 'Work Board';
+    el.textContent = (state && state.title) ? state.title : 'WorkBoard';
     el.focus();
     // Select all so first keystroke replaces.
     const r = document.createRange(); r.selectNodeContents(el);

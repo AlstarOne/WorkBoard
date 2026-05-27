@@ -88,8 +88,8 @@ def bootstrap_board(board_dir: Path, profile: str = "software") -> None:
     target_json = board_dir / "board.json"
     if not target_json.exists() and TEMPLATE_JSON.exists():
         data = json.loads(TEMPLATE_JSON.read_text())
-        project_name = board_dir.parent.name or "Work Board"
-        data["title"] = f"{project_name} — Work Board"
+        project_name = board_dir.parent.name or "WorkBoard"
+        data["title"] = f"WorkBoard — {project_name}"
         data["tagTaxonomy"] = _load_tag_profile(profile)
         target_json.write_text(json.dumps(data, indent=2))
     target_html = board_dir / "board.html"
