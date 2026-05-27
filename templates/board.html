@@ -1348,14 +1348,15 @@ function reorderColumn(srcId, targetId) {
 // Clears src.stackUnder so dragging a stacked column across the row pops
 // it out of its stack.
 function previewReorderColumn(srcId, targetId) {
-  // #119 correction — pair-swap, not splice-insert. User wants: drag A onto C
-  // → A and C trade slots, B (and anything between) stays put. Path-independent:
-  // always swap relative to the dragstart snapshot, so crossing intermediate
-  // columns doesn't accumulate displacements.
+  // #119 correction — iPhone-style splice-insert reflow. Drag A onto C:
+  // remove A from its slot, insert at C's slot; columns between A and C
+  // shift one slot toward A's old slot to fill the gap. Path-independent:
+  // computed relative to the dragstart snapshot so the result depends only
+  // on the current hover target, not the intermediate hover history.
   if (!state || srcId === targetId || !_colDragSnapshot) return;
   // Idempotence: dragover fires ~every frame while cursor is over a column.
-  // If we already previewed this target, bail — otherwise we re-render + FLIP
-  // every frame, animations stack, and adjacent columns visibly vibrate.
+  // Bail if target hasn't changed — otherwise we re-render + FLIP every
+  // frame, animations stack, and unrelated columns visibly vibrate.
   if (_colLastPreviewTargetId === targetId) return;
   const snap = _colDragSnapshot;
   const si = snap.findIndex(c => c.id === srcId);
@@ -1364,7 +1365,8 @@ function previewReorderColumn(srcId, targetId) {
   const old = captureColumnRects();
   const next = snap.map(c => ({ ...c }));
   if (next[si].stackUnder) next[si].stackUnder = null;  // free from stack on horizontal drag
-  [next[si], next[ti]] = [next[ti], next[si]];
+  const [moved] = next.splice(si, 1);
+  next.splice(ti, 0, moved);
   state.columns = next;
   _colLastPreviewTargetId = targetId;
   render();
