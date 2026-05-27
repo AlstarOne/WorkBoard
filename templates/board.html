@@ -383,7 +383,8 @@
                 color 150ms, border-color 200ms;
     pointer-events: none; cursor: pointer;
   }
-  body.col-dragging-active #col-trash {
+  body.col-dragging-active #col-trash,
+  body.card-dragging-active #col-trash {
     display: flex;
     transform: scale(1) translateY(0); opacity: 1; pointer-events: auto;
     animation: trash-breathe 2.4s ease-in-out infinite;
@@ -1997,6 +1998,8 @@ function renderCardCompact(card) {
     try { e.dataTransfer.setData('text/card-id', card.id); } catch (_) {}
     e.dataTransfer.effectAllowed = 'move';
     el.classList.add('dragging');
+    // Show the trash zone while a card is mid-drag (mirrors col drag).
+    document.body.classList.add('card-dragging-active');
     // #119 — seed live-reflow state. hover slot is filled on first dragover.
     _cardDrag = {
       cardId: card.id,
@@ -2012,6 +2015,7 @@ function renderCardCompact(card) {
   });
   el.addEventListener('dragend', () => {
     el.classList.remove('dragging');
+    document.body.classList.remove('card-dragging-active');
     document.querySelectorAll('.column.card-src-col')
       .forEach(c => c.classList.remove('card-src-col'));
     dbg('dragend (cardDrag=' + (_cardDrag ? 'pending' : 'committed') + ')');
@@ -2022,6 +2026,13 @@ function renderCardCompact(card) {
   el.addEventListener('click', e => {
     if (e.target.closest('.prio-chip, .num-ref')) return;
     openModal(card.id);
+  });
+  // Right-click → confirm + delete. Same path as the modal Delete button
+  // and the drag-to-trash zone (see deleteCard helper).
+  el.addEventListener('contextmenu', async e => {
+    e.preventDefault();
+    if (!(await miniConfirm('Delete card?', { sub: `"${card.title}"` }))) return;
+    deleteCard(card.id);
   });
 
   const head = document.createElement('div');
@@ -2416,10 +2427,7 @@ function renderModal(card) {
   del.textContent = 'Delete card';
   del.onclick = async () => {
     if (!(await miniConfirm('Confirm?', { sub: `Delete card "${card.title}"` }))) return;
-    pushUndo();
-    state.cards = state.cards.filter(c => c.id !== card.id);
-    closeModal();
-    scheduleSave(); render();
+    deleteCard(card.id);
   };
   foot.appendChild(del);
   modal.appendChild(foot);
@@ -3745,6 +3753,25 @@ function handleCardRemoved({ id }) {
   }, { once: true });
 }
 
+// Shared delete path used by the modal Delete button, right-click on a
+// card, and the trash drop-zone. Animates the card out via .removing.
+function deleteCard(id) {
+  if (!state) return;
+  pushUndo();
+  state.cards = state.cards.filter(c => c.id !== id);
+  const el = findCardEl(id);
+  if (el) {
+    const colId = el.dataset.col;
+    el.classList.add('removing');
+    el.addEventListener('animationend', () => {
+      el.remove();
+      refreshColumnCount(colId);
+    }, { once: true });
+  }
+  if (_openCardId === id) closeModal();
+  scheduleSave();
+}
+
 function handleColumnAdded({ column, index }) {
   if (!state) return;
   if (!state.columns.find(c => c.id === column.id)) {
@@ -3866,32 +3893,57 @@ async function init() {
     b.onclick = () => setView(b.dataset.view);
   });
 
-  // Trash drop-zone (visible only while a column is being dragged).
+  // Trash drop-zone — visible while either a column or a card is being
+  // dragged. Accepts both drops; type is disambiguated by which MIME the
+  // dataTransfer carries (text/col-id vs text/plain "card:<id>").
   const trash = $('#col-trash');
   trash.addEventListener('dragover', e => {
-    if (!(e.dataTransfer.types || []).includes('text/col-id')) return;
+    const types = e.dataTransfer.types || [];
+    const isCol  = types.includes('text/col-id');
+    const isCard = types.includes('text/card-id') || types.includes('text/plain') || !!_cardDrag;
+    if (!isCol && !isCard) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     trash.classList.add('over');
   });
   trash.addEventListener('dragleave', () => trash.classList.remove('over'));
   trash.addEventListener('drop', async e => {
-    const id = e.dataTransfer.getData('text/col-id');
     trash.classList.remove('over');
-    if (!id) return;
     e.preventDefault();
-    const col = state.columns.find(c => c.id === id);
+
+    // ── Card drop ────────────────────────────────────────────────────
+    let cardId = e.dataTransfer.getData('text/card-id');
+    if (!cardId) {
+      const plain = e.dataTransfer.getData('text/plain') || '';
+      if (plain.startsWith('card:')) cardId = plain.slice(5);
+    }
+    if (!cardId && _cardDrag) cardId = _cardDrag.cardId;
+    if (cardId) {
+      // Cancel any in-flight drag preview so the source element returns
+      // to its column before the deletion animation runs.
+      if (_cardDrag) cancelCardDrag();
+      const card = state.cards.find(c => c.id === cardId);
+      if (!card) return;
+      if (!(await miniConfirm('Delete card?', { sub: `"${card.title}"` }))) return;
+      deleteCard(cardId);
+      return;
+    }
+
+    // ── Column drop (existing behaviour) ────────────────────────────
+    const colId = e.dataTransfer.getData('text/col-id');
+    if (!colId) return;
+    const col = state.columns.find(c => c.id === colId);
     if (!col) return;
     if (col.kind !== 'custom') {
       toast(`"${col.name}" is a default column — can't delete`);
       return;
     }
-    const cardCount = state.cards.filter(c => c.column === id).length;
+    const cardCount = state.cards.filter(c => c.column === colId).length;
     const sub = cardCount
       ? `Delete "${col.name}" — ${cardCount} card(s) → Backlog`
       : `Delete column "${col.name}"`;
     if (!(await miniConfirm('Confirm?', { sub }))) return;
-    deleteColumn(id);
+    deleteColumn(colId);
   });
 
   setInterval(tickTimes, 15000);
