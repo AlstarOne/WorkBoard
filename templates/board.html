@@ -1359,8 +1359,9 @@ function captureCardRects() {
   });
   return map;
 }
-function flipPlayCards(oldRects) {
+function flipPlayCards(oldRects, opts) {
   if (!oldRects) return;
+  const duration = (opts && opts.duration) || 1080;
   document.querySelectorAll('.card[data-card-id]').forEach(c => {
     const id = c.dataset.cardId;
     const oldR = oldRects.get(id);
@@ -1374,7 +1375,7 @@ function flipPlayCards(oldRects) {
         { transform: `translate(${dx}px, ${dy}px)` },
         { transform: 'translate(0, 0)' },
       ],
-      { duration: 1080, easing: 'cubic-bezier(0.34, 1.4, 0.64, 1)' }
+      { duration, easing: 'cubic-bezier(0.34, 1.4, 0.64, 1)' }
     );
   });
 }
@@ -1472,10 +1473,18 @@ function reflowCardDragPreview() {
   const wantNextId = _cardDrag.hoverBeforeCardId;
   const wantNextEl = wantNextId ? targetCol.querySelector(`[data-card-id="${wantNextId}"]`) : null;
   if (cur === targetCol && curNext === wantNextEl) return;
+  // Finish any in-flight card FLIPs so the next captureCardRects measures
+  // settled positions, not mid-animation transforms (was causing vibration
+  // when dragover fired faster than animations completed).
+  document.querySelectorAll('.card[data-card-id]').forEach(c => {
+    c.getAnimations().forEach(a => a.finish());
+  });
   const rects = captureCardRects();
   targetCol.insertBefore(_cardDrag.srcEl, wantNextEl);
   _cardDragRects = rects;
-  requestAnimationFrame(() => flipPlayCards(rects));
+  // Short duration for live drag reflow — long durations stack up faster than
+  // the user can wiggle the cursor. SSE moves still default to 1080ms.
+  requestAnimationFrame(() => flipPlayCards(rects, { duration: 280 }));
 }
 
 // Commit the previewed position to state on drop. Computes insertion index
@@ -1505,9 +1514,17 @@ function commitCardDrag() {
   if (targetCol === 'done' && !card.doneAt) card.doneAt = card.updatedAt;
   if (targetCol !== 'done') card.doneAt = null;
   state.cards.splice(insertIdx, 0, card);
+  // DOM is already correct (preview did the insertBefore). Don't render() —
+  // it would rebuild the DOM from scratch and kill the in-flight FLIPs that
+  // are still settling, making the card "snap" instead of glide. Just patch
+  // the source card's data-col attr if the column changed + refresh counts.
+  const srcEl = _cardDrag.srcEl;
+  const srcCol = _cardDrag.srcCol;
+  if (srcEl && srcEl.dataset.col !== targetCol) srcEl.dataset.col = targetCol;
   _cardDrag = null;
   scheduleSave();
-  render();
+  refreshColumnCount(targetCol);
+  if (srcCol && srcCol !== targetCol) refreshColumnCount(srcCol);
 }
 
 function cancelCardDrag() {
