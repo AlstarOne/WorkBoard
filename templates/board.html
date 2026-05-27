@@ -486,7 +486,13 @@
     background: var(--neutral); color: var(--col-header);
     font-size: 11px; padding: 2px 6px; border-radius: 10px; font-weight: 600;
   }
-  .column-body { overflow-y: auto; flex: 1; min-height: 30px; padding: 2px; }
+  /* overflow: hidden auto = overflow-x hidden + overflow-y auto. Killing
+     the x-axis stops the spurious horizontal scrollbar that appeared on
+     bottom of every column (browsers compute overflow-x: auto when only
+     overflow-y is set). Vertical padding is bumped 2px → 10px so card
+     flash/pop-in box-shadows (~14px blur) render INSIDE the clip box
+     instead of being cut off at the column-body edge. */
+  .column-body { overflow: hidden auto; flex: 1; min-height: 30px; padding: 10px 4px; }
   .add-card-btn {
     width: 100%; text-align: left; padding: 6px 8px; margin-top: 6px;
     background: transparent; border: 0; color: var(--muted); cursor: pointer;
