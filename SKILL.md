@@ -1,6 +1,6 @@
 ---
 name: board-steward
-description: Live kanban work-board steward. Maintain `board/board.json` (source of truth), `board/index.json` (compact digest), and `board/board.html` (the kanban UI served by a local Python HTTP server with live SSE streaming) so a project's active work never gets lost across sessions. Invoke at session start, after any user-confirmed shipped task, on `shipped|deployed|merged|verified|done|works|fixed` keywords, and at session end. Greets the user on every invocation so it's visible. First run on a new project? Spawns the server, opens the browser, mines `~/.claude/projects/*/sessions/*.jsonl` for context, then streams cards into an empty board one-at-a-time with pop/slide animations.
+description: Tracks active work in a project kanban (board.json + live HTML board served on 127.0.0.1:7891). MUST USE when user says — shipped, deployed, merged, fixed, completed, finished, verified, done, deferred, blocked, paused, moved, add card, log this, track it, what shipped, what's left, status, where are we, what did we do yesterday, sprint, backlog, todo, kanban. Triggers — git commit / push / systemctl restart / scp / rsync that touch prod, or in-progress card whose notes match files just edited. SKIP for pure code questions (debug, explain, refactor, rename) that don't ship anything. Bootstraps on first run by mining ~/.claude/projects/*/sessions/*.jsonl for history; streams cards into an empty board with pop/slide animations. Survives sessions: SessionStart hook auto-injects a digest so the board is never forgotten between sprints, branching todos, or week-long contexts.
 allowed-tools:
   - Read
   - Write
@@ -63,6 +63,29 @@ EOF
 Best-effort: if the call fails, continue silently — but missing log lines themselves become a signal (Steward stopped running). **Don't fake a clean event** — record real `issues` tags (`missed-greeting`, `read-full-when-index-enough`, etc.) and free-form `notes` honestly. The point is improvement, not vanity.
 
 Inspect anytime with `python3 ~/.agents/skills/board-steward/scripts/report.py [--days 7] [--project <path>]`.
+
+---
+
+## When to engage (decision table)
+
+The SessionStart hook already injects a digest at session boot — you know the board exists. This table tells you when to ACT on it vs. stay silent.
+
+| User said / situation | Action |
+|---|---|
+| "shipped X" / "deployed Y" / "fixed Z" / "verified" / "done with N" / "landed" | **Must use** — `card.py move <num> done` with a real writeup |
+| "what's left?" / "status?" / "where are we?" / "what shipped today?" | **Must use** — read the SessionStart digest first; `card.py list` for slices |
+| "add a card for X" / "log this" / "track X" / "save this for later" | **Must use** — `card.py add` |
+| "move X to backlog/blocked/in-progress" / "this is deferred" / "pause X" | **Must use** — `card.py move` |
+| User opens session with no specific ask (just "what's next?") | **Drift check** — surface stale in-progress cards from the digest (Tier 1 only) |
+| Conversation just shipped something but no card moved | **Must use — backfill NOW.** Don't batch to session end. This is the drift class card #84 was built to kill. |
+| "debug this function" / "why is X failing?" / "explain this code" | **Skip** — board not relevant |
+| "rename foo to bar" / "refactor this file" / pure code edits | **Skip — unless** that work ends in a ship/fix; then move-card right after |
+| "what did we do yesterday?" / convo recap | **Use lightly** — the digest's "Last shipped" line covers most asks; only Tier 2 if the user wants more |
+| Main Claude just ran `git commit` / `git push` / `systemctl restart` for prod | **Must use** — a real ship; `card.py move done` with the commit SHA |
+
+**Default bias:** under-engage when uncertain. A missed card is recoverable. An over-eager skill that interjects on every code question is noise. But once you DO act, act fully — move + writeup + index regen + bidirectional link if there's a parent.
+
+**The board is source of truth, not your memory.** If a user asks "did we do X?" your first instinct should be `card.py list` or `grep` the digest — not "I recall doing X yesterday." Your memory drifts; the board doesn't.
 
 ---
 
