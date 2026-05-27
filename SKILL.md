@@ -189,6 +189,27 @@ A Done card with open subtasks is a deliberate "shipped 1/5" state — leave it 
 
 This is the headline product behaviour from `VISION.md` §"The principle" (*zero input from the user — work auto-logs*). Skip the lifecycle only for genuine non-tasks (a pure question, a debug-this-snippet, an explain-X) per the §"When to engage" decision table.
 
+### F. Reconciliation check — double-check the board reflects reality
+
+Cards drift. Code ships without the matching `move done`; commits land that should have been a card; a card sits `inprogress` for hours after the work actually shipped. The Steward's job is to catch this — actively, not just at session start.
+
+**Trigger a reconciliation pass at these moments:**
+
+1. **Before answering "what's left / anything else / is everything done"** — the user is asking for ground truth. Run `card.py list --column inprogress` + `card.py list --column super-urgent`, then for each in-flight card grep the recent `git log` for matching commits. If a card describes work that's already in HEAD, flag it: *"#N looks shipped at <sha> — want me to move it to Done?"*
+2. **After a cluster of commits** that didn't go through a `card.py move done` (e.g., you just made 3 commits while the user iterated on a UI knob). Scan `git log` since the last `move done` — if any commit touches scope no card covers, propose a backfill card.
+3. **Before session end** (part of §D) — same scan: every `inprogress` card either ships now (`move done` with writeup) or rolls forward with a `notes` update explaining why it's still open.
+
+**Don't silently auto-move cards** — surface drift to the user and let them confirm. The user said: *"the skill will require to double-check cards"* (2026-05-27). The point is the *check*, not the *move*; auto-moving would re-introduce the silent-drift class.
+
+Cheap recipes:
+```bash
+# Cards still in In Progress — read titles + look for matching commits.
+python3 ~/.agents/skills/board-steward/scripts/card.py list --column inprogress
+
+# Commits since last 'card.py move <n> done' — anything novel?
+git log --oneline --since="$(date -v-2H +%FT%T)"
+```
+
 ---
 
 ## Saving cleanly — prefer `card.py` (v3 default)
