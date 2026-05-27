@@ -350,20 +350,49 @@ def _autocheck_subtasks(nodes, ts):
             _autocheck_subtasks(st["children"], ts)
 
 
+def _find_subtask_anywhere(nodes, sid):
+    """Locate subtask by id in the tree; return the node or None."""
+    for st in nodes:
+        if st.get("id") == sid:
+            return st
+        kid = _find_subtask_anywhere(st.get("children") or [], sid)
+        if kid:
+            return kid
+    return None
+
+
 def cmd_move(args, d, board):
     c = find_card(d, args.ref)
     old = c["column"]
     c["column"] = args.column
     if args.column == "done":
-        c["doneAt"] = c.get("doneAt") or now_iso()
+        ts = now_iso()
+        c["doneAt"] = c.get("doneAt") or ts
         # Auto-strip the 'bug' tag on done — regression is fixed.
         if "bug" in (c.get("tags") or []):
             c["tags"] = [t for t in c["tags"] if t != "bug"]
-        # Auto-check all open subtasks — the card being Done implies the
-        # work is done. If a subtask was deliberately unfinished, the user
-        # should have pre-unfinished it before shipping (or used 'improve'
-        # to add it back as a new open subtask after the fact).
-        _autocheck_subtasks(c.get("subtasks") or [], now_iso())
+        # #188 — every ship is a SUBTASK in the card's cycle history.
+        # No force-auto-check across the tree (Done can sit with open
+        # subtasks; that's a deliberate "shipped 1/5" state).
+        c.setdefault("subtasks", [])
+        if not c["subtasks"]:
+            # First ship of this card — append a single cycle marker.
+            sid = new_subtask_id(c)
+            c["subtasks"].append({
+                "id": sid, "text": "☑ initial ship",
+                "done": True, "doneAt": ts,
+                "createdAt": ts, "children": [],
+            })
+            c["lastTouchedSubtask"] = sid
+        else:
+            # Subsequent ship — close ONLY the cycle subtask in flight
+            # (lastTouchedSubtask). Sibling subtasks stay in whatever
+            # state the user left them.
+            sid = c.get("lastTouchedSubtask")
+            st = _find_subtask_anywhere(c["subtasks"], sid) if sid else None
+            if st and not st.get("done"):
+                st["done"] = True
+                st["doneAt"] = ts
     elif args.column != "done" and old == "done":
         c["doneAt"] = None  # un-done
     wu = maybe_stdin(args.writeup, args.writeup_stdin)
@@ -411,12 +440,16 @@ def cmd_improve(args, d, board):
 
 
 def cmd_bug(args, d, board):
-    """REOPEN-AS-BUG transition. Done → In Progress + 'bug' tag.
+    """REOPEN-AS-BUG transition. Done → In Progress + 'bug' tag + bug
+    cycle subtask. The 4th canonical lifecycle verb (see VISION.md §4).
 
-    The 4th canonical lifecycle verb (see VISION.md §4). Same effect as
-    the modal's '🐞 Reopen as bug' button: card moves back to In Progress,
-    doneAt clears, 'bug' tag added (idempotent). The 'bug' tag is
-    auto-stripped again when the card next lands in done (regression fixed).
+    Same effect as the modal's '🐞 Reopen as bug' button: card moves back
+    to In Progress, doneAt clears, 'bug' tag added (idempotent), AND a
+    new open subtask "🐞 fix bug[: <reason>]" is appended so the bug
+    cycle is first-class history (per #188). The 'bug' tag is auto-
+    stripped again when the card next lands in done (regression fixed);
+    the bug-cycle subtask gets closed by the next ship and stays as
+    permanent evidence "this card had a regression".
     """
     c = find_card(d, args.ref)
     if c["column"] == "inprogress" and "bug" in (c.get("tags") or []):
@@ -427,9 +460,20 @@ def cmd_bug(args, d, board):
     c.setdefault("tags", [])
     if "bug" not in c["tags"]:
         c["tags"].append("bug")
+    # #188 — bug cycle = a subtask.
+    c.setdefault("subtasks", [])
+    sid = new_subtask_id(c)
+    reason = (args.reason or "").strip()
+    text = f"🐞 fix bug: {reason}" if reason else "🐞 fix bug"
+    c["subtasks"].append({
+        "id": sid, "text": text,
+        "done": False,
+        "createdAt": now_iso(), "children": [],
+    })
+    c["lastTouchedSubtask"] = sid
     c["updatedAt"] = now_iso()
     rev = atomic_save(board, d)
-    print(f"🐞 #{c['num']} {old} → inprogress (+bug tag) (rev {rev})")
+    print(f"🐞 #{c['num']} {old} → inprogress (+bug tag, +subtask {sid}) (rev {rev})")
 
 
 def cmd_sim(args, d, board):
@@ -702,8 +746,9 @@ def build_parser():
     psh.add_argument("ref")
     psh.set_defaults(fn=cmd_show)
 
-    pbug = sub.add_parser("bug", help="reopen a Done card as a bug (Done → In Progress + 'bug' tag)")
+    pbug = sub.add_parser("bug", help="reopen a Done card as a bug (Done → In Progress + 'bug' tag + 🐞 fix-bug subtask)")
     pbug.add_argument("ref", help="card num or id")
+    pbug.add_argument("--reason", help="optional reason — becomes the bug-fix subtask text")
     pbug.set_defaults(fn=cmd_bug)
 
     pimp = sub.add_parser("improve", help="add an improvement subtask + reopen (Done → In Progress + new subtask)")

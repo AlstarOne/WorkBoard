@@ -175,7 +175,17 @@ When the user gives Claude a substantive task in a board-steward workspace, driv
 3. **On scope expansion / new finding mid-task** — `card.py subtask add <num> "<the new step>"`. Subtasks tree out *inside* the card; the parent never leaves In Progress while children are pending.
 4. **On a transient blocker** — `card.py move <num> blocked --notes "<reason>"`. Move back to `inprogress` when unblocked.
 5. **On ship** — `card.py move <num> done --writeup "<paragraph: commits, files, verification>"`. Card glides to the top of Done's today-group with FLIP siblings reflowing.
-6. **On reopen / user reports a regression on a done card** — `card.py move <num> inprogress` (no need to file a new card), then `card.py subtask add <num> "<the new fix>"`, do the work, `move <num> done` again with a fresh writeup. Same card, two lifetimes — preserves history.
+6. **On regression after ship** — `card.py bug <num> --reason "<what broke>"` (the 4th lifecycle verb). Card goes back to In Progress with the `bug` tag AND a new open `🐞 fix bug: <reason>` subtask; the next `move done` closes that subtask, leaving permanent evidence of the cycle.
+7. **On enhancement after ship** — `card.py improve <num> "<what's being added>"` (the 5th verb). Same flow as bug but without the bug tag; the improvement subtask is appended open, closed on next ship.
+
+#### Subtask semantic (post-#188)
+
+The card has **two layers of truth**:
+
+- **Card column = goal state** — whether the high-level goal is shipped.
+- **Subtasks = work-cycle history** — one open-then-closed subtask per ship/bug/improve cycle. `☑ initial ship` on first done; `🐞 fix bug: <reason>` on each bug reopen; user-named subtask on each improve. Never force-checked.
+
+A Done card with open subtasks is a deliberate "shipped 1/5" state — leave it alone. The cycle subtasks are first-class history forever: a card that was bugged 4 times then improved twice shows that count on the board, not in commit messages.
 
 This is the headline product behaviour from `VISION.md` §"The principle" (*zero input from the user — work auto-logs*). Skip the lifecycle only for genuine non-tasks (a pure question, a debug-this-snippet, an explain-X) per the §"When to engage" decision table.
 

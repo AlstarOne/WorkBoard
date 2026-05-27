@@ -1773,14 +1773,34 @@ function commitCardDrag() {
     card.tags = card.tags.filter(t => t !== 'bug');
     if (_cardDrag.srcEl) _cardDrag.srcEl.classList.remove('is-bug');
   }
-  // Auto-check all open subtasks on done (the card being Done = work done).
-  if (targetCol === 'done' && (card.subtasks || []).length) {
+  // #188 — every ship is a SUBTASK in the card's cycle history.
+  // First ship (no prior subtasks) → append '☑ initial ship'.
+  // Subsequent ship → close ONLY lastTouchedSubtask. No force-auto-check
+  // across the tree (Done can sit with open subtasks; that's a deliberate
+  // "shipped 1/5" state). Mirrors card.py cmd_move.
+  if (targetCol === 'done') {
+    card.subtasks = card.subtasks || [];
     const ts = now();
-    const walk = nodes => nodes.forEach(st => {
-      if (!st.done) { st.done = true; st.doneAt = ts; }
-      if (st.children && st.children.length) walk(st.children);
-    });
-    walk(card.subtasks);
+    if (card.subtasks.length === 0) {
+      const sid = 's-' + Math.random().toString(36).slice(2, 8);
+      card.subtasks.push({
+        id: sid, text: '☑ initial ship',
+        done: true, doneAt: ts,
+        createdAt: ts, children: [],
+      });
+      card.lastTouchedSubtask = sid;
+    } else if (card.lastTouchedSubtask) {
+      const findSt = (nodes, sid) => {
+        for (const st of nodes) {
+          if (st.id === sid) return st;
+          const kid = findSt(st.children || [], sid);
+          if (kid) return kid;
+        }
+        return null;
+      };
+      const st = findSt(card.subtasks, card.lastTouchedSubtask);
+      if (st && !st.done) { st.done = true; st.doneAt = ts; }
+    }
   }
   state.cards.splice(insertIdx, 0, card);
   // DOM is already correct (preview did the insertBefore). Don't render() —
