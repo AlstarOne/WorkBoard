@@ -2852,6 +2852,9 @@ function renderColumn(col, cards) {
   // re-render, then animate from old→new positions for an iPhone-rearrange
   // smoothness instead of a teleport.)
   el.addEventListener('dragstart', e => {
+    // dragstart bubbles — if a descendant (a card) started the drag, leave
+    // the event alone or we'd preventDefault() and kill the card drag.
+    if (e.target !== el) return;
     if (!el.draggable) { e.preventDefault(); return; } // only when grip-armed
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/col-id', col.id);
