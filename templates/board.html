@@ -1347,16 +1347,20 @@ function reorderColumn(srcId, targetId) {
 // Clears src.stackUnder so dragging a stacked column across the row pops
 // it out of its stack.
 function previewReorderColumn(srcId, targetId) {
-  if (!state || srcId === targetId) return;
-  const cols = state.columns;
-  const si = cols.findIndex(c => c.id === srcId);
-  const ti = cols.findIndex(c => c.id === targetId);
+  // #119 correction — pair-swap, not splice-insert. User wants: drag A onto C
+  // → A and C trade slots, B (and anything between) stays put. Path-independent:
+  // always swap relative to the dragstart snapshot, so crossing intermediate
+  // columns doesn't accumulate displacements.
+  if (!state || srcId === targetId || !_colDragSnapshot) return;
+  const snap = _colDragSnapshot;
+  const si = snap.findIndex(c => c.id === srcId);
+  const ti = snap.findIndex(c => c.id === targetId);
   if (si < 0 || ti < 0 || si === ti) return;
   const old = captureColumnRects();
-  const src = cols[si];
-  if (src.stackUnder) src.stackUnder = null;   // free from stack on horizontal drag
-  const [moved] = cols.splice(si, 1);
-  cols.splice(ti, 0, moved);
+  const next = snap.map(c => ({ ...c }));
+  if (next[si].stackUnder) next[si].stackUnder = null;  // free from stack on horizontal drag
+  [next[si], next[ti]] = [next[ti], next[si]];
+  state.columns = next;
   render();
   requestAnimationFrame(() => flipPlayColumns(old));
 }
@@ -3201,6 +3205,13 @@ function renderColumn(col, cards) {
     _colDragSrcId = col.id;
     _colDragSnapshot = JSON.parse(JSON.stringify(state.columns));
     _colDragCommitted = false;
+    // #119 correction — hide the source column's footprint so it doesn't
+    // sit "in the background" while being dragged. setTimeout(0) so the
+    // browser captures the drag image synchronously before visibility flips.
+    setTimeout(() => {
+      const cur = document.querySelector('.column[data-col="' + cssEsc(col.id) + '"]');
+      if (cur) cur.style.visibility = 'hidden';
+    }, 0);
     dbg('col dragstart ' + col.id);
   });
   el.addEventListener('dragend', () => {
@@ -3212,20 +3223,27 @@ function renderColumn(col, cards) {
       c.classList.remove('col-drop-stack-target');
     });
     _colDragRects = null;
-    // #119 — if drop didn't commit (cancelled outside any column), revert the
-    // live-preview reorders by restoring the snapshot taken at dragstart.
-    if (!_colDragCommitted && _colDragSnapshot) {
+    // #119 correction — clear _colDragSrcId BEFORE the revert-render so the
+    // re-render in renderColumn doesn't re-hide A. Also clear visibility on
+    // the current source element in the committed (no-render) path.
+    const wasCommitted = _colDragCommitted;
+    const snap = _colDragSnapshot;
+    _colDragSrcId = null;
+    _colDragSnapshot = null;
+    _colDragCommitted = false;
+    if (!wasCommitted && snap) {
       dbg('col dragend — revert to snapshot');
       const old = captureColumnRects();
-      state.columns = _colDragSnapshot;
+      state.columns = snap;
       render();
       requestAnimationFrame(() => flipPlayColumns(old));
     } else {
       dbg('col dragend (committed)');
+      // Source DOM element survives a committed drop; un-hide it.
+      el.style.visibility = '';
+      // Defensive: clear any stray hidden state on other columns.
+      document.querySelectorAll('.column').forEach(c => { c.style.visibility = ''; });
     }
-    _colDragSrcId = null;
-    _colDragSnapshot = null;
-    _colDragCommitted = false;
   });
   // Reorder on drop onto another column's edge. #117: if drop lands in the
   // BOTTOM 40% of the target column, stack the source UNDER the target
@@ -3372,6 +3390,10 @@ function renderColumn(col, cards) {
     openModal(card.id);
   };
   el.appendChild(addBtn);
+
+  // #119 correction — keep the dragged column invisible through re-renders.
+  // _colDragSrcId is set during a column drag; cleared on dragend.
+  if (_colDragSrcId === col.id) el.style.visibility = 'hidden';
 
   return el;
 }
