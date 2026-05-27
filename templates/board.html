@@ -1159,24 +1159,77 @@ let _colDragCommitted = false;
 let _colLastPreviewTargetId = null;  // #119 — idempotence guard for dragover thrash
 
 // #119 — visible drag HUD. Prints every drag/mouse event as a green-on-black
-// overlay so events are visible regardless of console filters.
+// overlay so events are visible regardless of console filters. Header bar
+// is a drag handle (mousedown to move); position persists to localStorage.
+const _HUD_POS_KEY = 'workboard.hudPos';
 function _dbgHud() {
   let hud = document.getElementById('drag-hud');
   if (hud) return hud;
   hud = document.createElement('div');
   hud.id = 'drag-hud';
-  hud.style.cssText = 'position:fixed;top:64px;right:12px;width:360px;max-height:280px;overflow:auto;background:rgba(0,0,0,0.88);color:#0f0;font:11px/1.35 monospace;padding:8px 10px;z-index:99999;border-radius:6px;pointer-events:none;border:1px solid #0f0;box-shadow:0 2px 12px rgba(0,0,0,0.4);';
-  hud.innerHTML = '<div style="color:#ff0;border-bottom:1px solid #0f0;padding-bottom:4px;margin-bottom:4px;">#119 DRAG HUD — drag a column or card</div>';
+  hud.style.cssText = 'position:fixed;width:360px;max-height:280px;overflow:auto;background:rgba(0,0,0,0.88);color:#0f0;font:11px/1.35 monospace;padding:0;z-index:99999;border-radius:6px;border:1px solid #0f0;box-shadow:0 2px 12px rgba(0,0,0,0.4);user-select:none;';
+  // Restore saved position; default to top:64 right:12.
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(_HUD_POS_KEY) || 'null'); } catch (e) {}
+  if (saved && Number.isFinite(saved.left) && Number.isFinite(saved.top)) {
+    hud.style.left = saved.left + 'px';
+    hud.style.top = saved.top + 'px';
+  } else {
+    hud.style.top = '64px';
+    hud.style.right = '12px';
+  }
+  const head = document.createElement('div');
+  head.id = 'drag-hud-head';
+  head.style.cssText = 'color:#ff0;border-bottom:1px solid #0f0;padding:4px 10px;margin:0;cursor:grab;background:rgba(255,255,0,0.08);';
+  head.textContent = '#119 DRAG HUD — drag header to move';
+  hud.appendChild(head);
+  const body = document.createElement('div');
+  body.id = 'drag-hud-body';
+  body.style.cssText = 'padding:6px 10px 8px;';
+  hud.appendChild(body);
   document.body.appendChild(hud);
+  // Drag-to-move on the yellow header.
+  let dragState = null;
+  head.addEventListener('mousedown', e => {
+    e.preventDefault();
+    const r = hud.getBoundingClientRect();
+    dragState = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    head.style.cursor = 'grabbing';
+    // Switching from right-anchored to left-anchored so move math is one-axis.
+    hud.style.left = r.left + 'px';
+    hud.style.top = r.top + 'px';
+    hud.style.right = '';
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragState) return;
+    const nx = Math.max(0, Math.min(window.innerWidth - 60, e.clientX - dragState.dx));
+    const ny = Math.max(0, Math.min(window.innerHeight - 24, e.clientY - dragState.dy));
+    hud.style.left = nx + 'px';
+    hud.style.top = ny + 'px';
+  });
+  document.addEventListener('mouseup', () => {
+    if (!dragState) return;
+    dragState = null;
+    head.style.cursor = 'grab';
+    try {
+      localStorage.setItem(_HUD_POS_KEY, JSON.stringify({
+        left: parseFloat(hud.style.left) || 0,
+        top: parseFloat(hud.style.top) || 0,
+      }));
+    } catch (e) {}
+  });
   return hud;
 }
 function dbg(msg) {
   try {
-    const hud = _dbgHud();
-    const line = document.createElement('div');
-    line.textContent = new Date().toTimeString().slice(0,8) + '  ' + msg;
-    hud.insertBefore(line, hud.children[1] || null);
-    while (hud.childNodes.length > 14) hud.removeChild(hud.lastChild);
+    _dbgHud();
+    const body = document.getElementById('drag-hud-body');
+    if (body) {
+      const line = document.createElement('div');
+      line.textContent = new Date().toTimeString().slice(0,8) + '  ' + msg;
+      body.insertBefore(line, body.firstChild);
+      while (body.childNodes.length > 14) body.removeChild(body.lastChild);
+    }
   } catch (e) {}
   console.log('[#119]', msg);
 }
