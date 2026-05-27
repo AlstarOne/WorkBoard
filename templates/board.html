@@ -1070,10 +1070,11 @@
     font-size: 11px; font-weight: 600; margin-right: 8px;
   }
   .modal-reopen-bug:hover { background: #C8553D; color: #fff; border-color: #C8553D; }
-  /* #164 — Cards tagged 'bugged' get a warm-pink left border + 🐞 corner
-     glyph so the regression history is visible at a glance. */
-  .card.is-bugged { border-left: 4px solid #C8553D; padding-left: 9px; }
-  .card.is-bugged::after {
+  /* #164 — Cards tagged 'bug' get a warm-pink left border + 🐞 corner
+     glyph for high-visibility. Tied to the existing red 'bug' tag in the
+     taxonomy. Auto-stripped when the card lands in Done (regression fixed). */
+  .card.is-bug { border-left: 4px solid #C84B4B; padding-left: 9px; }
+  .card.is-bug::after {
     content: '🐞';
     position: absolute; top: 4px; right: 6px;
     font-size: 12px; opacity: 0.85; pointer-events: none;
@@ -1552,6 +1553,13 @@ function commitCardDrag() {
   card.updatedAt = now();
   if (targetCol === 'done' && !card.doneAt) card.doneAt = card.updatedAt;
   if (targetCol !== 'done') card.doneAt = null;
+  // Auto-strip the 'bug' tag on done — regression is fixed. Remove the
+  // .is-bug class inline so the 🐞 + border vanish the moment the card
+  // lands, no SSE round-trip lag.
+  if (targetCol === 'done' && (card.tags || []).includes('bug')) {
+    card.tags = card.tags.filter(t => t !== 'bug');
+    if (_cardDrag.srcEl) _cardDrag.srcEl.classList.remove('is-bug');
+  }
   state.cards.splice(insertIdx, 0, card);
   // DOM is already correct (preview did the insertBefore). Don't render() —
   // it would rebuild the DOM from scratch and kill the in-flight FLIPs that
@@ -2036,7 +2044,7 @@ function renderCardCompact(card) {
   const el = document.createElement('div');
   el.className = 'card';
   if (card.priority) el.classList.add('prio-' + card.priority);
-  if ((card.tags || []).includes('bugged')) el.classList.add('is-bugged');
+  if ((card.tags || []).includes('bug')) el.classList.add('is-bug');
   if (_tagFilter.size && !(card.tags || []).some(t => _tagFilter.has(t))) el.classList.add('dim-by-filter');
   if (_columnFilter.size && !_columnFilter.has(card.column)) el.classList.add('dim-by-filter');
   el.draggable = true;
@@ -3873,7 +3881,7 @@ function reopenAsBug(id) {
   card.column = 'inprogress';
   card.doneAt = null;
   card.tags = card.tags || [];
-  if (!card.tags.includes('bugged')) card.tags.push('bugged');
+  if (!card.tags.includes('bug')) card.tags.push('bug');
   card.updatedAt = now();
   closeModal();
   scheduleSave();

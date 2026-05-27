@@ -335,6 +335,9 @@ def cmd_move(args, d, board):
     c["column"] = args.column
     if args.column == "done":
         c["doneAt"] = c.get("doneAt") or now_iso()
+        # Auto-strip the 'bug' tag on done — regression is fixed.
+        if "bug" in (c.get("tags") or []):
+            c["tags"] = [t for t in c["tags"] if t != "bug"]
     elif args.column != "done" and old == "done":
         c["doneAt"] = None  # un-done
     wu = maybe_stdin(args.writeup, args.writeup_stdin)
@@ -400,8 +403,8 @@ def cmd_sim(args, d, board):
         c["column"] = "inprogress"
         c["doneAt"] = None
         c.setdefault("tags", [])
-        if "bugged" not in c["tags"]:
-            c["tags"].append("bugged")
+        if "bug" not in c["tags"]:
+            c["tags"].append("bug")
         c["updatedAt"] = now_iso()
         rev = atomic_save(board, d)
         print(f"🐞 #{num} reopened as bug (rev {rev})")
