@@ -37,9 +37,9 @@ _LLM_MODEL = os.environ.get("HOURLY_MODEL", "haiku")
 # ---------- LLM digest prompt ---------------------------------------------
 
 _LLM_PROMPT = """\
-You are extracting kanban cards from 1 HOUR of work activity. The input below is a chronological log from a single hour.
+You are extracting kanban cards from a block of work activity. The input below is a chronological log from one OR more time buckets.
 
-Your job: identify the DISCRETE UNITS OF WORK that happened. Each unit becomes ONE card. Group related turns (the user asked, then clarified, then you built it, then they reviewed) under ONE card — NOT one card per turn.
+Your job: identify the DISCRETE UNITS OF WORK that happened in each bucket. Each unit becomes ONE card. Group related turns (the user asked, then clarified, then you built it, then they reviewed) under ONE card — NOT one card per turn.
 
 Output: a JSON ARRAY of card objects. Each card:
 {
@@ -71,12 +71,12 @@ Return ONLY the JSON array. NO markdown, NO commentary, NO ```json fences.
 
 # ---------- digest builder ------------------------------------------------
 
-def _bucket_hour(ts: datetime) -> int:
-    return int(ts.timestamp()) // 3600
+def _bucket_hour(ts: datetime, bucket_min: int = 60) -> int:
+    return int(ts.timestamp()) // (bucket_min * 60)
 
 
-def _bucket_label(bucket: int) -> str:
-    dt = datetime.fromtimestamp(bucket * 3600, tz=timezone.utc)
+def _bucket_label(bucket: int, bucket_min: int = 60) -> str:
+    dt = datetime.fromtimestamp(bucket * bucket_min * 60, tz=timezone.utc)
     return dt.strftime("%Y-%m-%d %H:%M UTC")
 
 
@@ -270,7 +270,8 @@ def _cwd_in_project(event: dict, project: Path) -> bool:
 
 def run(project: Path, board: Path, port: int, days: int,
         show_lifecycle: bool, pace_s: float,
-        max_buckets: int) -> None:
+        max_buckets: int, workers: int = 4,
+        bucket_min: int = 60) -> None:
     events = _flatten_events(project, days)
     if not events:
         print("no events to extract", file=sys.stderr)
@@ -287,32 +288,64 @@ def run(project: Path, board: Path, port: int, days: int,
     # Bucket by hour
     buckets: dict[int, list[dict]] = {}
     for ev in events:
-        buckets.setdefault(_bucket_hour(ev["ts"]), []).append(ev)
+        buckets.setdefault(_bucket_hour(ev["ts"], bucket_min), []).append(ev)
     sorted_buckets = sorted(buckets.keys())
     if max_buckets:
         sorted_buckets = sorted_buckets[-max_buckets:]   # most-recent N hours
 
-    print(f"▶ hourly extraction: {len(sorted_buckets)} bucket(s) of {len(events)} events",
+    print(f"▶ hourly extraction: {len(sorted_buckets)} bucket(s) of {len(events)} events "
+          f"(parallel workers={workers})",
           file=sys.stderr)
 
+    # Fire all LLM extractions in parallel; emit cards in chronological order
+    # as each bucket's result arrives.
+    from concurrent.futures import ThreadPoolExecutor
+
+    results: dict[int, list[dict]] = {}   # bucket_key → cards
     n_cards = 0
-    for bi, bucket in enumerate(sorted_buckets, 1):
-        bevents = buckets[bucket]
-        label = _bucket_label(bucket)
-        print(f"  [{bi}/{len(sorted_buckets)}] {label}  "
-              f"({len(bevents)} events) → calling LLM…",
-              file=sys.stderr)
-        cards = extract_cards_for_hour(bevents, project, label)
-        if not cards:
-            print(f"      0 cards",  file=sys.stderr)
-            continue
-        print(f"      {len(cards)} card(s) extracted",  file=sys.stderr)
-        for card in cards:
-            card["_bucket_label"] = label
-            num = emit_card(card_py, board, card, show_lifecycle, pace_s)
-            if num:
-                n_cards += 1
-            time.sleep(pace_s)
+
+    def _do_bucket(bucket_key: int) -> tuple[int, list[dict]]:
+        bevents = buckets[bucket_key]
+        label = _bucket_label(bucket_key, bucket_min)
+        return bucket_key, extract_cards_for_hour(bevents, project, label)
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        # Submit all jobs.
+        futures = {pool.submit(_do_bucket, b): b for b in sorted_buckets}
+        completed = 0
+        next_to_emit = 0   # index into sorted_buckets
+
+        # As futures complete, stash results; whenever the chronologically-
+        # next bucket is ready, drain it (and any contiguous followers) into
+        # the board so the UI fills in real-time-ish.
+        from concurrent.futures import as_completed
+        for fut in as_completed(futures):
+            try:
+                key, cards = fut.result()
+            except Exception as e:
+                key = futures[fut]
+                cards = []
+                print(f"  ! bucket {_bucket_label(key, bucket_min)} extraction error: {e}",
+                      file=sys.stderr)
+            results[key] = cards
+            completed += 1
+            print(f"  [{completed}/{len(sorted_buckets)}] {_bucket_label(key, bucket_min)}  "
+                  f"→ {len(cards)} card(s) extracted",
+                  file=sys.stderr)
+
+            # Drain contiguous ready buckets in chronological order.
+            while (next_to_emit < len(sorted_buckets)
+                   and sorted_buckets[next_to_emit] in results):
+                emit_key = sorted_buckets[next_to_emit]
+                label = _bucket_label(emit_key, bucket_min)
+                for card in results[emit_key]:
+                    card["_bucket_label"] = label
+                    num = emit_card(card_py, board, card,
+                                    show_lifecycle, pace_s)
+                    if num:
+                        n_cards += 1
+                    time.sleep(pace_s)
+                next_to_emit += 1
 
     print(f"✓ emitted {n_cards} card(s) across {len(sorted_buckets)} hour(s)",
           file=sys.stderr)
@@ -330,10 +363,15 @@ def main():
                     help="play task→ip→done flight per card (slower, more theatre)")
     ap.add_argument("--pace", type=float, default=0.3,
                     help="seconds between card-add operations")
+    ap.add_argument("--workers", type=int, default=4,
+                    help="parallel LLM workers (default 4)")
+    ap.add_argument("--bucket-min", type=int, default=60,
+                    help="bucket size in minutes (default 60)")
     args = ap.parse_args()
     os.environ["BOARD_SERVER"] = f"http://127.0.0.1:{args.port}"
     run(args.project.resolve(), args.board.resolve(), args.port,
-        args.days, args.show_lifecycle, args.pace, args.max_buckets)
+        args.days, args.show_lifecycle, args.pace, args.max_buckets,
+        workers=args.workers, bucket_min=args.bucket_min)
 
 
 if __name__ == "__main__":

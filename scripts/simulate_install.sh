@@ -35,6 +35,7 @@ LEGACY_DISCOVER=0                   # 1 = use old discover.py (session-shaped)
 REPLAY_MODE=""                      # "" = bulk discover (default), "realtime" = turn-paced, "hourly" = LLM-per-hour
 HOURLY_MAX_BUCKETS=0                # 0 = all hours in --days window
 HOURLY_SHOW_LIFECYCLE=0             # 1 = play task→ip→done per card
+HOURLY_BUCKET_MIN=60                # bucket size in minutes
 TURNS_PER_SEC=10.0                  # default replay pace — punchy by default
 GAP_SPEEDUP=""                      # if set, preserve real idle gaps × speedup
 MAX_TURNS=0
@@ -60,6 +61,7 @@ while [[ $# -gt 0 ]]; do
     --no-llm) NO_LLM=1; shift ;;
     --hourly-max-buckets) HOURLY_MAX_BUCKETS="$2"; shift 2 ;;
     --hourly-show-lifecycle) HOURLY_SHOW_LIFECYCLE=1; shift ;;
+    --bucket-min) HOURLY_BUCKET_MIN="$2"; shift 2 ;;
     -h|--help)
       sed -n '2,18p' "$0" | sed 's/^# //; s/^#$//'
       exit 0 ;;
@@ -175,6 +177,7 @@ if [[ "$REPLAY_MODE" == "hourly" ]]; then
                --board   "${SIM_DIR}/board/board.json"
                --port    "$PORT"
                --days    "$DAYS"
+               --bucket-min "$HOURLY_BUCKET_MIN"
                --max-buckets "$HOURLY_MAX_BUCKETS")
   if [[ "$HOURLY_SHOW_LIFECYCLE" == "1" ]]; then
     HOURLY_ARGS+=(--show-lifecycle)
