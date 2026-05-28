@@ -636,13 +636,39 @@ def run(project: Path, board: Path, port: int, days: int,
     from concurrent.futures import ThreadPoolExecutor, as_completed
     n_cards = 0
 
+    def _retry_recursive_subbuckets(
+            bucket_events: list[dict], current_min: int,
+            depth: int = 0, max_depth: int = 3) -> list[dict]:
+        """Last-resort: a single bucket of `current_min` minutes timed out.
+        Re-bucket its events at half the size and retry each sub-bucket.
+        Recurse until success or max_depth. Returns combined cards."""
+        if not bucket_events or current_min <= 1 or depth >= max_depth:
+            return []
+        half_min = max(1, current_min // 2)
+        sub_buckets: dict[int, list[dict]] = {}
+        for ev in bucket_events:
+            sub_buckets.setdefault(
+                _bucket_hour(ev["ts"], half_min), []).append(ev)
+        sub_keys = sorted(sub_buckets.keys())
+        print(f"  ↻↻ recursive retry depth={depth+1}: "
+              f"re-bucket {len(bucket_events)} events at {half_min}min "
+              f"→ {len(sub_keys)} sub-bucket(s)", file=sys.stderr)
+        recovered: list[dict] = []
+        for sk in sub_keys:
+            label = _bucket_label(sk, half_min)
+            cards = extract_cards_for_chunk(
+                [(label, sub_buckets[sk])], project)
+            if not cards:
+                cards = _retry_recursive_subbuckets(
+                    sub_buckets[sk], half_min, depth + 1, max_depth)
+            recovered.extend(cards)
+        return recovered
+
     def _do_chunk(chunk_keys: list[int]) -> tuple[list[int], list[dict]]:
         chunk = [(_bucket_label(k, bucket_min), buckets[k])
                  for k in chunk_keys]
         cards = extract_cards_for_chunk(chunk, project)
-        # Retry on failure: if chunk size > 1, split in half and retry each.
-        # A 2-bucket chunk that timed out at 90s often succeeds as two
-        # 1-bucket chunks (smaller digests).
+        # Tier 1 retry: chunk-size > 1 → split in half (smaller LLM digests).
         if not cards and len(chunk_keys) > 1:
             mid = len(chunk_keys) // 2
             halves = [chunk_keys[:mid], chunk_keys[mid:]]
@@ -654,8 +680,18 @@ def run(project: Path, board: Path, port: int, days: int,
             for half in halves:
                 sub_chunk = [(_bucket_label(k, bucket_min), buckets[k])
                              for k in half]
-                recovered.extend(extract_cards_for_chunk(sub_chunk, project))
+                sub_cards = extract_cards_for_chunk(sub_chunk, project)
+                if not sub_cards and len(half) == 1:
+                    # Tier 2 retry: single-bucket call STILL failed → recursive
+                    # sub-bucketing at half bucket_min.
+                    sub_cards = _retry_recursive_subbuckets(
+                        buckets[half[0]], bucket_min)
+                recovered.extend(sub_cards)
             cards = recovered
+        elif not cards and len(chunk_keys) == 1:
+            # Tier 2 retry from the start (chunk-size 1 input that failed).
+            cards = _retry_recursive_subbuckets(
+                buckets[chunk_keys[0]], bucket_min)
         return chunk_keys, cards
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
