@@ -870,6 +870,14 @@
     border-color: var(--ink);
     color: var(--ink);
   }
+  /* #237 — passive stat: no hover affordance, no toggle */
+  .cal-summary .stat.passive {
+    cursor: default;
+  }
+  .cal-summary .stat.passive:hover {
+    background: transparent;
+    border-color: transparent;
+  }
   .cal-summary .stat-num { font-size: 14px; font-weight: 700; color: var(--ink); }
   .cal-summary .stat.shipped .stat-num { color: var(--green); }
   .cal-summary .stat.created .stat-num { color: var(--accent); }
@@ -3533,29 +3541,29 @@ function renderCalendar() {
   // jump straight to "show me what shipped" or "what's still open".
   const summary = document.createElement('div');
   summary.className = 'cal-summary';
-  // 'created' is its own toggle key — semantically "include all cards"
-  // (every card was created, so this OR-combines with the others).
-  // Activating Created with Shipped/Open does NOT clear them; they coexist
-  // and pass via OR in the day-filter.
+  // #237 — `shipped` + `open` are toggle filters; `created` is a passive
+  // glanceable count (every card was created, so toggling it was a no-op).
   const SUMMARY_STATS = [
-    { key: 'done',    cls: 'shipped', num: shippedCount, label: 'shipped' },
-    { key: 'created', cls: 'created', num: createdCount, label: 'created' },
-    { key: 'open',    cls: 'open',    num: openCount,    label: 'still open' },
+    { key: 'done',    cls: 'shipped', num: shippedCount, label: 'shipped', passive: false },
+    { key: 'created', cls: 'created', num: createdCount, label: 'created', passive: true  },
+    { key: 'open',    cls: 'open',    num: openCount,    label: 'still open', passive: false },
   ];
   SUMMARY_STATS.forEach(s => {
-    const btn = document.createElement('button');
-    btn.className = 'stat ' + s.cls;
-    if (_calFilter.has(s.key)) btn.classList.add('active');
-    btn.innerHTML = `<span class="stat-num">${s.num}</span> ${s.label}`;
-    btn.title = s.key === 'done' ? 'Toggle: shipped cards'
-              : s.key === 'open' ? 'Toggle: still-open cards'
-              : 'Toggle: all cards created this month';
-    btn.onclick = () => {
-      if (_calFilter.has(s.key)) { _calFilter.delete(s.key); }
-      else { _calFilter.add(s.key); }
-      renderCalendar();
-    };
-    summary.appendChild(btn);
+    const el = document.createElement(s.passive ? 'span' : 'button');
+    el.className = 'stat ' + s.cls + (s.passive ? ' passive' : '');
+    if (!s.passive && _calFilter.has(s.key)) el.classList.add('active');
+    el.innerHTML = `<span class="stat-num">${s.num}</span> ${s.label}`;
+    if (s.passive) {
+      el.setAttribute('data-tip', `${s.num} cards created in this month`);
+    } else {
+      el.title = s.key === 'done' ? 'Toggle: shipped cards' : 'Toggle: still-open cards';
+      el.onclick = () => {
+        if (_calFilter.has(s.key)) { _calFilter.delete(s.key); }
+        else { _calFilter.add(s.key); }
+        renderCalendar();
+      };
+    }
+    summary.appendChild(el);
   });
   topbar.appendChild(summary);
   cal.appendChild(topbar);
