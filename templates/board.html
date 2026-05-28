@@ -1004,6 +1004,10 @@
     display: flex; flex-direction: column; gap: 3px;
     margin-top: 2px;
     flex: 1; min-height: 0;
+    /* #241 — explicit overflow-x:hidden so sub-pixel chip widths can't
+       trigger a horizontal scrollbar, which was flashing on scroll and
+       reading as flicker. */
+    overflow-x: hidden;
     overflow-y: auto;
     scrollbar-width: thin;
     scrollbar-color: var(--card-border) transparent;
@@ -3740,9 +3744,12 @@ function renderCalendar() {
             rafId = 0;
             const listBottom = eventList.scrollTop + eventList.clientHeight;
             let hidden = 0;
+            // #241 — 4px dead zone (was 1px). Sub-pixel positions can have
+            // a chip flipping hidden/visible right at the edge → looked like
+            // flicker. 4px is below chip-height so we never miss a real one.
             for (const chip of eventList.querySelectorAll('.cal-event-chip')) {
               const bot = chip.offsetTop + chip.offsetHeight;
-              if (bot > listBottom + 1) hidden++;
+              if (bot > listBottom + 4) hidden++;
             }
             if (hidden === 0) {
               more.style.visibility = 'hidden';
