@@ -32,13 +32,14 @@ import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-# Reuse harvesters + classifiers from discover2.
+# Reuse harvesters + classifiers from discover2 and title rewriter from sim_titler.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from discover2 import (
     harvest_jsonl, harvest_convo, harvest_git, harvest_memory, harvest_plans,
     parse_ts, is_trivial, classify_ship, MANDATORY_RE, BUG_RE,
     SHIP_STRONG_RE, files_from_tool_use, msg_text,
 )
+from sim_titler import rewrite as titler_rewrite, prewarm_cache
 
 
 def _flatten_events(project: Path, days: int) -> list[dict]:
@@ -84,14 +85,30 @@ def _cwd_in_project(event: dict, project: Path) -> bool:
         return False
 
 
-def _card_add(card_py: Path, board: Path, title: str, urgency: list[str],
-              origin: str) -> int | None:
-    """Run card.py add; return assigned num (max num after add)."""
+def _card_add(card_py: Path, board: Path, prompt_text: str,
+              asst_context: str, urgency: list[str],
+              origin_prefix: str, use_llm: bool) -> int | None:
+    """Run card.py add. Routes the prompt through sim_titler.rewrite to get a
+    work-summary title, optional code, and notes — instead of plopping the
+    first 80 chars of the raw prompt. Returns assigned num."""
+    board_dir = board.parent
+    rw = titler_rewrite(prompt_text, asst_context, board_dir=board_dir,
+                        use_llm=use_llm)
+    title = rw["title"] or prompt_text.strip()[:80]
+    code = rw.get("code") or ""
+    notes = rw.get("notes") or ""
+    if code:
+        title = f"{code}: {title}" if not title.lower().startswith(code.lower()) else title
+    title = title[:80]
+
     col = "mandatory" if urgency else "task"
+    origin = f"{origin_prefix} User: \"{prompt_text[:240]}\""
     args = [sys.executable, str(card_py), "--board", str(board), "add",
             "--column", col, "--priority", "mid",
-            "--title", title[:80], "--origin", origin[:300],
+            "--title", title, "--origin", origin[:400],
             "--tag", "discovered"]
+    if notes:
+        args += ["--notes", notes]
     if urgency:
         args += ["--tag", "mandatory"]
     try:
@@ -100,7 +117,6 @@ def _card_add(card_py: Path, board: Path, title: str, urgency: list[str],
         return None
     if out.returncode != 0:
         return None
-    # Parse "+ #NN ..." from stdout
     m = re.search(r"#(\d+)", out.stdout)
     return int(m.group(1)) if m else None
 
@@ -130,7 +146,7 @@ def _card_subtask(card_py: Path, board: Path, num: int, text: str) -> bool:
 
 def replay(project: Path, board: Path, port: int, days: int,
            turns_per_sec: float, gap_speedup: float | None,
-           max_turns: int) -> None:
+           max_turns: int, use_llm: bool = True) -> None:
     events = _flatten_events(project, days)
     if not events:
         print("no events to replay", file=sys.stderr)
@@ -140,6 +156,23 @@ def replay(project: Path, board: Path, port: int, days: int,
     if not card_py.exists():
         print(f"card.py not found at {card_py}", file=sys.stderr)
         return
+
+    # Pre-warm the title cache BEFORE the replay starts so every card_add is
+    # a cache hit (no inline LLM stutter).
+    board_dir = board.parent
+    def _progress(done: int, total: int) -> None:
+        sys.stderr.write(f"\r▶ rewriting titles {done}/{total}…")
+        sys.stderr.flush()
+    print(f"▶ pre-warming title cache for {len(events)} events…",
+          file=sys.stderr)
+    counters = prewarm_cache(events, board_dir, workers=4,
+                             use_llm=use_llm, progress_cb=_progress)
+    sys.stderr.write("\n")
+    print(f"  titled {counters['total']} unique prompts "
+          f"(llm={counters['llm_called']}, "
+          f"heuristic={counters['heuristic_only']}, "
+          f"cached={counters['cached_hit']})",
+          file=sys.stderr)
 
     print(f"▶ replaying {len(events)} events at "
           f"{'gap×' + str(gap_speedup) if gap_speedup else f'{turns_per_sec}/sec'}",
@@ -192,8 +225,16 @@ def replay(project: Path, board: Path, port: int, days: int,
 
             urgency = [m.group(0).lower()
                        for m in [MANDATORY_RE.search(text)] if m]
-            origin = f"Discovered live (turn {n_replayed+1}). User: \"{text[:200]}\""
-            num = _card_add(card_py, board, text, urgency, origin)
+            # Grab the immediate next asst_msg text for LLM context (if any).
+            ev_idx = events.index(ev) if ev in events else -1
+            asst_ctx = ""
+            for nx in events[ev_idx + 1: ev_idx + 5]:
+                if nx["kind"] in ("asst_msg", "convo_asst") and nx.get("text"):
+                    asst_ctx = nx["text"][:1200]
+                    break
+            origin_prefix = f"Sim replay (turn {n_replayed+1})."
+            num = _card_add(card_py, board, text, asst_ctx, urgency,
+                            origin_prefix, use_llm)
             if num is not None:
                 state["active_num"] = num
                 state["active_col"] = "mandatory" if urgency else "task"
@@ -274,17 +315,20 @@ def main():
     ap.add_argument("--port", type=int, default=7894,
                     help="port the server is listening on")
     ap.add_argument("--days", type=int, default=2)
-    ap.add_argument("--turns-per-sec", type=float, default=2.0)
+    ap.add_argument("--turns-per-sec", type=float, default=10.0)
     ap.add_argument("--gap-speedup", type=float, default=None,
                     help="if set, preserve real idle gaps × speedup "
                          "(overrides --turns-per-sec)")
     ap.add_argument("--max-turns", type=int, default=0,
                     help="cap substantive turns processed (0 = unlimited)")
+    ap.add_argument("--no-llm", action="store_true",
+                    help="skip LLM rewrite, use only heuristic_title")
     args = ap.parse_args()
 
     os.environ["BOARD_SERVER"] = f"http://127.0.0.1:{args.port}"
     replay(args.project.resolve(), args.board.resolve(), args.port,
-           args.days, args.turns_per_sec, args.gap_speedup, args.max_turns)
+           args.days, args.turns_per_sec, args.gap_speedup, args.max_turns,
+           use_llm=not args.no_llm)
 
 
 if __name__ == "__main__":

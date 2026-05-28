@@ -32,10 +32,13 @@ PROFILE="software"
 LIFECYCLE=1                         # replay task→ip→done flight at the end
 LIFECYCLE_INTERVAL=2                # seconds between phases
 LEGACY_DISCOVER=0                   # 1 = use old discover.py (session-shaped)
-REPLAY_MODE=""                      # "" = bulk discover (default), "realtime" = turn-paced
-TURNS_PER_SEC=2.0
+REPLAY_MODE=""                      # "" = bulk discover (default), "realtime" = turn-paced, "hourly" = LLM-per-hour
+HOURLY_MAX_BUCKETS=0                # 0 = all hours in --days window
+HOURLY_SHOW_LIFECYCLE=0             # 1 = play task→ip→done per card
+TURNS_PER_SEC=10.0                  # default replay pace — punchy by default
 GAP_SPEEDUP=""                      # if set, preserve real idle gaps × speedup
 MAX_TURNS=0
+NO_LLM=0                            # 1 = heuristic only, skip LLM rewrite
 
 # ---- arg parsing -------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
@@ -54,6 +57,9 @@ while [[ $# -gt 0 ]]; do
     --turns-per-sec) TURNS_PER_SEC="$2"; shift 2 ;;
     --gap-speedup) GAP_SPEEDUP="$2"; shift 2 ;;
     --max-turns) MAX_TURNS="$2"; shift 2 ;;
+    --no-llm) NO_LLM=1; shift ;;
+    --hourly-max-buckets) HOURLY_MAX_BUCKETS="$2"; shift 2 ;;
+    --hourly-show-lifecycle) HOURLY_SHOW_LIFECYCLE=1; shift ;;
     -h|--help)
       sed -n '2,18p' "$0" | sed 's/^# //; s/^#$//'
       exit 0 ;;
@@ -133,6 +139,17 @@ if ! curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
   exit 1
 fi
 
+# Open the browser NOW (before discovery / replay) so the user watches cards
+# pop in live. Final report still prints at the end.
+if [[ "$OPEN_BROWSER" == "1" ]]; then
+  if command -v open >/dev/null 2>&1; then
+    open "http://127.0.0.1:${PORT}/"
+  elif command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "http://127.0.0.1:${PORT}/"
+  fi
+  OPEN_BROWSER=0   # don't reopen at end
+fi
+
 # The bootstrap discovery thread runs in the background and streams cards via
 # SSE; cards may still be arriving when the browser opens (that's the point —
 # user sees them pop in live). Discovery streams real session history from the
@@ -151,6 +168,21 @@ fi
 
 export SIM_BOARD_DIR="${SIM_DIR}/board"
 
+# ---- hourly LLM-digest branch --------------------------------------------------
+if [[ "$REPLAY_MODE" == "hourly" ]]; then
+  echo "▶ hourly LLM extraction from $PROJECT_ABS history"
+  HOURLY_ARGS=(--project "$PROJECT_ABS"
+               --board   "${SIM_DIR}/board/board.json"
+               --port    "$PORT"
+               --days    "$DAYS"
+               --max-buckets "$HOURLY_MAX_BUCKETS")
+  if [[ "$HOURLY_SHOW_LIFECYCLE" == "1" ]]; then
+    HOURLY_ARGS+=(--show-lifecycle)
+  fi
+  python3 "${SCRIPT_DIR}/hourly_extractor.py" "${HOURLY_ARGS[@]}"
+  REALTIME_DONE=1   # share the gate so bulk-discover is skipped
+fi
+
 # ---- realtime replay branch (turn-paced) ---------------------------------------
 if [[ "$REPLAY_MODE" == "realtime" ]]; then
   echo "▶ turn-paced realtime replay from $PROJECT_ABS history"
@@ -162,6 +194,9 @@ if [[ "$REPLAY_MODE" == "realtime" ]]; then
                --max-turns "$MAX_TURNS")
   if [[ -n "$GAP_SPEEDUP" ]]; then
     REPLAY_ARGS+=(--gap-speedup "$GAP_SPEEDUP")
+  fi
+  if [[ "$NO_LLM" == "1" ]]; then
+    REPLAY_ARGS+=(--no-llm)
   fi
   python3 "${SCRIPT_DIR}/lifecycle_replay.py" "${REPLAY_ARGS[@]}"
   # skip the bulk-discover block below
