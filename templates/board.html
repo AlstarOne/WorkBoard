@@ -870,18 +870,39 @@
     border-color: var(--ink);
     color: var(--ink);
   }
-  /* #237 — passive stat: no hover affordance, no toggle */
+  /* #237 + #239 — passive stat: visually distinct from toggle pills.
+     Drops the pill shape (no padding, no border-radius, no border) and
+     uses a thin "label · separator" treatment so the eye reads it as
+     informational, not clickable. */
   .cal-summary .stat.passive {
     cursor: default;
+    padding: 5px 4px 5px 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--muted);
+    margin-right: 4px;
+    /* Subtle vertical divider on the right edge separates it from the
+       toggle pills that follow. */
+    border-right: 1px solid var(--card-border);
+    padding-right: 12px;
   }
   .cal-summary .stat.passive:hover {
     background: transparent;
     border-color: transparent;
+    border-right-color: var(--card-border);
   }
   .cal-summary .stat-num { font-size: 14px; font-weight: 700; color: var(--ink); }
   .cal-summary .stat.shipped .stat-num { color: var(--green); }
   .cal-summary .stat.created .stat-num { color: var(--accent); }
   .cal-summary .stat.open .stat-num    { color: var(--amber); }
+  /* Placed AFTER the color rules so it overrides .stat.created .stat-num
+     by source order at equal specificity. The passive look wins. */
+  .cal-summary .stat.passive .stat-num {
+    font-weight: 500;
+    color: var(--muted);
+    font-size: 13px;
+  }
 
   /* Filter chip row: empty by default, click to filter */
   .cal-filters {
@@ -3570,11 +3591,12 @@ function renderCalendar() {
   // jump straight to "show me what shipped" or "what's still open".
   const summary = document.createElement('div');
   summary.className = 'cal-summary';
-  // #237 — `shipped` + `open` are toggle filters; `created` is a passive
-  // glanceable count (every card was created, so toggling it was a no-op).
+  // #239 — order: created (passive context) → shipped (toggle) → still open
+  // (toggle). Passive `created` doesn't visually present as clickable so the
+  // eye knows the two toggles are the only interactive stats.
   const SUMMARY_STATS = [
-    { key: 'done',    cls: 'shipped', num: shippedCount, label: 'shipped', passive: false },
     { key: 'created', cls: 'created', num: createdCount, label: 'created', passive: true  },
+    { key: 'done',    cls: 'shipped', num: shippedCount, label: 'shipped', passive: false },
     { key: 'open',    cls: 'open',    num: openCount,    label: 'still open', passive: false },
   ];
   SUMMARY_STATS.forEach(s => {
