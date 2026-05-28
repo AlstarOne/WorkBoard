@@ -667,7 +667,9 @@
     position: fixed; inset: 0; background: rgba(9,30,66,.55);
     backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
     display: none; align-items: flex-start; justify-content: center;
-    z-index: 200; padding: 48px 20px 60px; overflow-y: auto;
+    /* #236 — sit above the calendar day modal (z:200) so clicking a card
+       inside it layers cleanly and Esc unwinds card → day → calendar. */
+    z-index: 300; padding: 48px 20px 60px; overflow-y: auto;
   }
   .modal-overlay.open { display: flex; animation: overlay-in .14s ease-out; }
   .modal {
@@ -1033,17 +1035,25 @@
     padding: 1px 6px; font-weight: 600;
   }
 
-  /* #235 BOARD-CAL-EXPAND — hover-revealed expand icon + day-detail modal */
+  /* #235 + #236 — bigger expand icon. Always faintly visible on populated
+     cells (.cal-day:hover dialed up to full). User said the v1 was too small. */
   .cal-day-expand {
-    position: absolute; top: 4px; right: 4px;
-    font-size: 11px; line-height: 1; color: var(--muted);
-    cursor: pointer; padding: 3px 5px;
-    border-radius: 3px; user-select: none;
-    opacity: 0; transition: opacity .15s, background .15s, color .15s;
+    position: absolute; top: 5px; right: 5px;
+    font-size: 16px; line-height: 1; color: var(--muted);
+    cursor: pointer; padding: 4px 7px;
+    border-radius: 5px; user-select: none;
+    opacity: .45;
+    transition: opacity .15s, background .15s, color .15s, transform .12s;
     z-index: 2;
+    background: rgba(255,255,255,.55);
+    border: 1px solid transparent;
   }
-  .cal-day:hover .cal-day-expand { opacity: .7; }
-  .cal-day-expand:hover { opacity: 1 !important; color: var(--ink); background: var(--card-border); }
+  .cal-day:hover .cal-day-expand { opacity: .9; border-color: var(--card-border); }
+  .cal-day-expand:hover {
+    opacity: 1 !important; color: var(--ink);
+    background: var(--card-bg); border-color: var(--muted);
+    transform: scale(1.08);
+  }
 
   .cal-day-modal-overlay {
     position: fixed; inset: 0;
@@ -1292,11 +1302,11 @@
   </span>
   <span class="sp"></span>
   <button id="tags-btn" class="header-pill" style="display:none" title="Show all tags used on this board">🏷 Tags <span id="tags-count">0</span></button>
+  <button id="reset-cols-btn" class="header-pill" style="display:none" title="Restore default column order: Task → Backlog → In Progress → Done → Notes, then others by recency">↺ Reset columns</button>
   <span class="view-toggle" id="view-toggle" style="display:none">
     <button data-view="board" class="active">Board</button>
     <button data-view="calendar">Calendar</button>
   </span>
-  <button id="reset-cols-btn" class="header-pill" style="display:none" title="Restore default column order: Task → Backlog → In Progress → Done → Notes, then others by recency">↺ Reset columns</button>
 </header>
 
 <!-- Tag legend popover (anchored under #tags-btn) -->
@@ -3163,6 +3173,9 @@ function setView(v) {
   document.querySelectorAll('#view-toggle button').forEach(b => {
     b.classList.toggle('active', b.dataset.view === v);
   });
+  // #236 — Reset Columns only meaningful in Board view. Don't tease it on Calendar.
+  const resetBtn = $('#reset-cols-btn');
+  if (resetBtn) resetBtn.style.display = (v === 'board' && state) ? '' : 'none';
   render();
 }
 
@@ -3788,7 +3801,9 @@ function _makeCalDayModalCard(card) {
     row.appendChild(r2);
   }
 
-  row.onclick = () => { closeCalDayModal(); openModal(card.id); };
+  // #236 — don't close the day modal; layer the card modal on top of it
+  // so Esc unwinds back to the day modal (Esc again closes day modal).
+  row.onclick = () => { openModal(card.id); };
   return row;
 }
 
@@ -3889,7 +3904,9 @@ function closeCalDayModal() {
 
 function _onCalDayModalKey(e) {
   if (!_calDayModal) return;
-  if (e.key === 'Escape') { e.preventDefault(); closeCalDayModal(); }
+  // #236 — if a card modal is also open, let its Esc handler close the
+  // card first; the day modal stays so the user lands back on it.
+  if (e.key === 'Escape' && !_openCardId) { e.preventDefault(); closeCalDayModal(); }
 }
 
 function renderColumn(col, cards) {
