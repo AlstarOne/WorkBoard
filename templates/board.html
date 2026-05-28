@@ -2590,6 +2590,8 @@ function renderCardCompact(card) {
     const tip = document.createElement('span');
     tip.className = 'tip-icon';
     tip.setAttribute('data-tip', card.origin);
+    // #244 — right-side placement so origin tip doesn't cover the card below.
+    tip.setAttribute('data-tip-placement', 'right');
     tip.textContent = 'i';
     tip.onclick = (e) => e.stopPropagation();
     head.appendChild(tip);
@@ -2606,6 +2608,7 @@ function renderCardCompact(card) {
       (card.lastTouchedSubtask ? `\nsubtask : ${fmtTime(card.lastTouchedSubtask)} (${relativeTime(card.lastTouchedSubtask)})` : '') +
       (card.doneAt ? `\ndone    : ${fmtTime(card.doneAt)} (${relativeTime(card.doneAt)})` : '')
     );
+    tm.setAttribute('data-tip-placement', 'right');
     tm.onclick = (e) => e.stopPropagation();
     head.appendChild(tm);
   }
