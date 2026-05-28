@@ -991,6 +991,11 @@
     overflow: hidden;
     transition: all .12s;
     line-height: 1.3;
+    /* #110v2 fix: chips are flex children of a column flexbox (.cal-events).
+       Without this, they shrink vertically when many cards stack — letting
+       them keep natural height + scroll on overflow restores the chip
+       design from before. */
+    flex-shrink: 0;
   }
   .cal-event-chip:hover {
     background: rgba(0,121,191,.14);
