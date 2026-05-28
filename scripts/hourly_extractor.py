@@ -291,7 +291,8 @@ def _cwd_in_project(event: dict, project: Path) -> bool:
 def run(project: Path, board: Path, port: int, days: int,
         show_lifecycle: bool, pace_s: float,
         max_buckets: int, workers: int = 4,
-        bucket_min: int = 60, chunk_size: int = 1) -> None:
+        bucket_min: int = 60, chunk_size: int = 1,
+        date_filter: str | None = None) -> None:
     events = _flatten_events(project, days)
     if not events:
         print("no events to extract", file=sys.stderr)
@@ -299,6 +300,20 @@ def run(project: Path, board: Path, port: int, days: int,
     # Filter to project scope: drop jsonl events whose cwd is unrelated.
     events = [e for e in events if e["kind"] != "user_prompt"
               or _cwd_in_project(e, project)]
+    # Date pin: keep only events that fall on this UTC calendar day.
+    if date_filter:
+        try:
+            target = datetime.strptime(date_filter, "%Y-%m-%d").date()
+        except ValueError:
+            print(f"  ! invalid --date {date_filter!r} (expected YYYY-MM-DD)",
+                  file=sys.stderr)
+            return
+        events = [e for e in events if e["ts"].date() == target]
+        if not events:
+            print(f"no events on {date_filter}", file=sys.stderr)
+            return
+        print(f"  date filter: {date_filter} → {len(events)} events",
+              file=sys.stderr)
 
     card_py = Path(__file__).resolve().parent / "card.py"
     if not card_py.exists():
@@ -330,6 +345,22 @@ def run(project: Path, board: Path, port: int, days: int,
         chunk = [(_bucket_label(k, bucket_min), buckets[k])
                  for k in chunk_keys]
         cards = extract_cards_for_chunk(chunk, project)
+        # Retry on failure: if chunk size > 1, split in half and retry each.
+        # A 2-bucket chunk that timed out at 90s often succeeds as two
+        # 1-bucket chunks (smaller digests).
+        if not cards and len(chunk_keys) > 1:
+            mid = len(chunk_keys) // 2
+            halves = [chunk_keys[:mid], chunk_keys[mid:]]
+            print(f"  ↻ retry: splitting failed chunk "
+                  f"[{', '.join(_bucket_label(k, bucket_min) for k in chunk_keys)}] "
+                  f"into {len(halves)} halves",
+                  file=sys.stderr)
+            recovered: list[dict] = []
+            for half in halves:
+                sub_chunk = [(_bucket_label(k, bucket_min), buckets[k])
+                             for k in half]
+                recovered.extend(extract_cards_for_chunk(sub_chunk, project))
+            cards = recovered
         return chunk_keys, cards
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -382,12 +413,14 @@ def main():
     ap.add_argument("--chunk-size", type=int, default=1,
                     help="buckets per LLM call (default 1 = no batching; "
                          "set 2-4 to amortize claude -p cold-start)")
+    ap.add_argument("--date", type=str, default=None,
+                    help="YYYY-MM-DD UTC — restrict to events on this day only")
     args = ap.parse_args()
     os.environ["BOARD_SERVER"] = f"http://127.0.0.1:{args.port}"
     run(args.project.resolve(), args.board.resolve(), args.port,
         args.days, args.show_lifecycle, args.pace, args.max_buckets,
         workers=args.workers, bucket_min=args.bucket_min,
-        chunk_size=args.chunk_size)
+        chunk_size=args.chunk_size, date_filter=args.date)
 
 
 if __name__ == "__main__":
