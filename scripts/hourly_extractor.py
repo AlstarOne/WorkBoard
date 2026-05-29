@@ -28,7 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from discover2 import (
     harvest_jsonl, harvest_convo, harvest_git, harvest_memory, harvest_plans,
-    parse_ts, find_convo_dir,
+    harvest_history, parse_ts, find_convo_dir,
 )
 
 _CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
@@ -648,7 +648,10 @@ def _flatten_events(project: Path, days: int) -> list[dict]:
     since = (datetime.now(timezone.utc) - timedelta(days=days)
              if days > 0 else None)
     events: list[dict] = []
-    events.extend(harvest_jsonl(since))
+    jsonl_events = harvest_jsonl(since)
+    events.extend(jsonl_events)
+    seen_sessions = {(e.get("meta") or {}).get("sessionId") for e in jsonl_events}
+    events.extend(harvest_history(since, exclude_sessions=seen_sessions))  # #282 gap-fill
     # Convo dir is auto-derived from Claude's own data (CLAUDE.md / transcripts),
     # not hardcoded — same resolver discover2.main() uses, so the inline path is
     # as portable as the standalone tool (#284). None → convo is skipped, which

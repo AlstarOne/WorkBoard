@@ -242,6 +242,57 @@ def harvest_plans(since: datetime | None) -> list[dict]:
     return out
 
 
+def harvest_history(since: datetime | None,
+                    exclude_sessions: set[str] | None = None) -> list[dict]:
+    """~/.claude/history.jsonl — the all-projects typed-prompt chronicle (#282).
+    Each record is {display, project(=cwd), timestamp(ms), sessionId}. It's a
+    SUBSET of harvest_jsonl (prompts only, no assistant turns/tools/files) and
+    stores raw display text that dedupes poorly against jsonl, so it's used as a
+    TRUE GAP-FILL: skip any sessionId already covered by harvest_jsonl
+    (exclude_sessions) — what's left is prompts from sessions whose per-project
+    *.jsonl was rotated/pruned. Slash-commands and shell bootstrap lines are
+    dropped (never work prompts). cwd is carried so the project filter works."""
+    out: list[dict] = []
+    exclude_sessions = exclude_sessions or set()
+    hist = Path.home() / ".claude" / "history.jsonl"
+    if not hist.is_file():
+        return out
+    try:
+        text = hist.read_text(errors="replace")
+    except OSError:
+        return out
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            o = json.loads(line)
+        except Exception:
+            continue
+        if (o.get("sessionId") or "") in exclude_sessions:
+            continue   # jsonl already has this session — not a gap
+        disp = (o.get("display") or "").strip()
+        # Drop slash-commands (/init, /clear) and bare shell/bootstrap lines —
+        # never substantive work prompts.
+        if not disp or disp.startswith("/") or disp.startswith("!") or \
+           disp.startswith("cd ") or disp.startswith("claude "):
+            continue
+        raw = o.get("timestamp")
+        try:
+            ts = datetime.fromtimestamp(int(raw) / 1000.0, tz=timezone.utc)
+        except (ValueError, TypeError, OSError):
+            continue
+        if since and ts < since:
+            continue
+        out.append({
+            "ts": ts, "source": "history", "kind": "user_prompt",
+            "text": disp[:2000], "files": [],
+            "meta": {"cwd": o.get("project") or "",
+                     "sessionId": o.get("sessionId") or "", "fromHistory": True},
+        })
+    return out
+
+
 _CONVO_HEADER_RE = re.compile(r"^\[(USER|CLAUDE)\]\s+(\d{1,2}):(\d{2})", re.M)
 
 
@@ -891,7 +942,10 @@ def main():
 
     # Harvest
     events: list[dict] = []
-    events.extend(harvest_jsonl(since))
+    jsonl_events = harvest_jsonl(since)
+    events.extend(jsonl_events)
+    seen_sessions = {(e.get("meta") or {}).get("sessionId") for e in jsonl_events}
+    events.extend(harvest_history(since, exclude_sessions=seen_sessions))  # #282 gap-fill
     events.extend(harvest_memory(since))
     events.extend(harvest_plans(since))
     if convo_dir:
