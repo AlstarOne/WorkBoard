@@ -22,6 +22,8 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# If quarantined under _attic/, the real repo root (with scripts/ + SKILL.md) is the parent.
+if [ "$(basename "$REPO")" = "_attic" ]; then REPO="$(dirname "$REPO")"; fi
 SCRIPTS="${REPO}/scripts"
 PY="$(command -v python3 || command -v python)"
 
@@ -107,7 +109,9 @@ for _ in $(seq 1 25); do
   if curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then break; fi
   sleep 0.2
 done
+SERVER_OK=0
 if curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+  SERVER_OK=1
   CARDS="$(curl -s "http://127.0.0.1:${PORT}/health" | "$PY" -c 'import sys,json;print(json.load(sys.stdin).get("cards","?"))' 2>/dev/null || echo '?')"
   ok "server live at http://127.0.0.1:${PORT}  (${CARDS} cards)"
 else
@@ -134,14 +138,18 @@ fi
 
 # ---- 5. open browser ---------------------------------------------------------
 URL="http://127.0.0.1:${PORT}"
-if [ "$OPEN_BROWSER" = "1" ]; then
+if [ "$OPEN_BROWSER" = "1" ] && [ "$SERVER_OK" = "1" ]; then
   if command -v open >/dev/null 2>&1; then open "$URL"
   elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$URL"
   fi
 fi
 
 echo
-ok "Done. Board live at ${URL}"
+if [ "$SERVER_OK" = "1" ]; then
+  ok "Done. Board live at ${URL}"
+else
+  warn "Install incomplete — board server did not come up (see ${PROJECT}/.board-server.log)"
+fi
 if [ "$DEMO" = "1" ]; then
   echo
   say "DEMO teardown when you're finished:"
