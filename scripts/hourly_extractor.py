@@ -358,6 +358,62 @@ def _emit_recon_pending(board: Path, candidates: list[dict],
     return 0
 
 
+def _emit_extraction_pending(board: Path, card_py: Path,
+                              chunks: list[list[int]],
+                              buckets: dict, bucket_min: int,
+                              project: Path) -> int:
+    """INLINE extraction (the free, no-Haiku default — #247). Instead of
+    spawning `claude -p haiku` per chunk, stage the bucketed digests in
+    extraction_pending.json. Main Claude — the session the user is already
+    in — reads it and emits the cards itself, at zero extra cost and higher
+    quality than Haiku. Returns the number of chunks staged."""
+    pending_path = board.parent / "extraction_pending.json"
+    staged = []
+    for ck in chunks:
+        ev = [e for k in ck for e in buckets.get(k, [])]
+        if not ev:
+            continue
+        label = ", ".join(_bucket_label(k, bucket_min) for k in ck)
+        ts_iso = datetime.fromtimestamp(
+            min(ck) * bucket_min * 60, tz=timezone.utc).isoformat()
+        staged.append({
+            "label": label,
+            "bucket_ts_iso": ts_iso,
+            "digest": build_digest(ev, project),
+        })
+    payload = {
+        "written_at": datetime.now(timezone.utc).isoformat(),
+        "board": str(board),
+        "card_py": str(card_py),
+        "card_format": _LLM_PROMPT,
+        "instructions": (
+            "INLINE board extraction (free — no Haiku). You (main Claude) have "
+            "full context, so produce BETTER cards than Haiku would. For EACH "
+            "chunk in `chunks` below: read its `digest`, identify the discrete "
+            "units of work exactly per `card_format`, and emit each as a card:\n"
+            "  python3 <card_py> --board <board> add --column COL --priority PRIO "
+            "--title T [--code CODE] --origin O --notes N --created-at <bucket_ts_iso> [--tag T]\n"
+            "Then for a card whose column is 'done', fly it through its lifecycle:\n"
+            "  python3 <card_py> --board <board> fly <num> done --pause-ms 150\n"
+            "Process chunks NEWEST-FIRST (they're already in that order). Keep "
+            "titles clean (code is a separate badge), cite commit SHAs in notes "
+            "when a COMMIT line is in the digest, and only assign a code to a "
+            "distinctly-named feature/system/fix. DELETE this file when all "
+            "chunks are done."
+        ),
+        "chunks": staged,
+    }
+    try:
+        pending_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
+        print(f"📋 staged {len(staged)} chunk(s) → {pending_path}\n"
+              f"   (inline mode — main Claude emits the cards, no Haiku cost)",
+              file=sys.stderr)
+    except OSError as e:
+        print(f"  ! extraction_pending write failed: {e}", file=sys.stderr)
+        return 0
+    return len(staged)
+
+
 def reconcile_sweep(card_py: Path, board: Path, events: list[dict],
                      banner_num: int | None = None) -> int:
     """Post-extraction LLM sweep on non-done cards. Asks LLM if any should
@@ -679,7 +735,8 @@ def run(project: Path, board: Path, port: int, days: int,
         reconcile: bool = True,
         snapshot_load: Path | None = None,
         end_days_ago: int = 0,
-        recent_first: bool = False) -> None:
+        recent_first: bool = False,
+        mode: str = "haiku") -> None:
     card_py = Path(__file__).resolve().parent / "card.py"
     if not card_py.exists():
         print(f"card.py not found at {card_py}", file=sys.stderr)
@@ -762,8 +819,17 @@ def run(project: Path, board: Path, port: int, days: int,
 
     print(f"▶ hourly extraction: {len(sorted_buckets)} bucket(s) of {len(events)} events "
           f"→ {len(chunks)} chunk(s) of ≤{chunk_size} bucket(s) "
-          f"(parallel workers={workers})",
+          f"(mode={mode}, parallel workers={workers})",
           file=sys.stderr)
+
+    # INLINE mode (#247, the free default): stage digests for main Claude to
+    # emit — no Haiku call. The session the user is already in does the work.
+    if mode == "inline":
+        n = _emit_extraction_pending(board, card_py, chunks, buckets,
+                                     bucket_min, project)
+        print(f"✓ inline extraction staged: {n} chunk(s) await main Claude",
+              file=sys.stderr)
+        return
 
     # Progress banner: a single 'notes' card the user can watch update live.
     banner_num = _banner_create(card_py, board, len(chunks))
@@ -922,6 +988,10 @@ def main():
     ap.add_argument("--recent-first", action="store_true",
                     help="emit newest buckets first so the most relevant cards "
                          "fly in immediately (board still sorts chronologically)")
+    ap.add_argument("--mode", choices=["haiku", "inline"], default="haiku",
+                    help="haiku = claude -p per chunk (costs usage); "
+                         "inline = stage extraction_pending.json for main Claude "
+                         "to emit (free, no Haiku, higher quality)")
     args = ap.parse_args()
     os.environ["BOARD_SERVER"] = f"http://127.0.0.1:{args.port}"
     run(args.project.resolve(), args.board.resolve(), args.port,
@@ -931,7 +1001,8 @@ def main():
         reconcile=not args.no_reconcile,
         snapshot_load=args.snapshot_load,
         end_days_ago=args.end_days_ago,
-        recent_first=args.recent_first)
+        recent_first=args.recent_first,
+        mode=args.mode)
 
 
 if __name__ == "__main__":

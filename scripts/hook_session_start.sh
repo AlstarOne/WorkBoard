@@ -151,11 +151,21 @@ fi
 # Helper path Claude will see and can call.
 card_py="$(dirname "$0")/card.py"
 
+# Inline-extraction nudge (#247): if a bootstrap staged digests for free
+# main-Claude emit, surface it so this session processes it (no Haiku cost).
+pending_line=""
+pending_file="$(dirname "${board_path}")/extraction_pending.json"
+if [ -f "${pending_file}" ]; then
+  nchunks="$(python3 -c "import json;print(len(json.load(open('${pending_file}')).get('chunks',[])))" 2>/dev/null || echo "?")"
+  pending_line="📋 INLINE EXTRACTION PENDING: ${nchunks} chunk(s) in ${pending_file} — emit cards from each chunk's digest per its instructions (FREE, no Haiku), then delete the file. See SKILL.md §J."
+fi
+
 cat <<MSG
 <board-steward-session-start>
 Board: ${board_path}
 ${live_line:-(server down — start: python3 $(dirname "$0")/serve.py --project ${project_dir})}
 ${digest}
+${pending_line}
 
 Protocol: every ship/fix/defer → \`${card_py} add\` or \`${card_py} move\` immediately (no batching). Status queries → \`card.py list\` or digest above, not memory. Detail → \`card.py show <num>\`. Never auto-Read board.json.
 </board-steward-session-start>

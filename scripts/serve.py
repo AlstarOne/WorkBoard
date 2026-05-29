@@ -428,7 +428,8 @@ def _stream_discovered_cards(project_root: Path, board_dir: Path,
 def _stream_hourly_cards(project_root: Path, board_dir: Path, port: int,
                           days: int, bucket_min: int = 30,
                           chunk_size: int = 2,
-                          harvest_root: Path | None = None) -> None:
+                          harvest_root: Path | None = None,
+                          mode: str = "inline") -> None:
     """Background-thread worker: the HIGH-COMPUTE startup fill (card #265/#268).
 
     Runs hourly_extractor.py over the project's full history — multi-source
@@ -458,21 +459,33 @@ def _stream_hourly_cards(project_root: Path, board_dir: Path, port: int,
     # harvest_root lets the board live in one dir while history is mined from
     # another (the isolated-sim / --demo case). Defaults to the board's own
     # project — the normal same-project install.
+    # harvest_root lets the board live in one dir while history is mined from
+    # another (the isolated-sim / --demo case). Defaults to the board's own
+    # project — the normal same-project install.
     base = [sys.executable, str(extractor),
             "--project", str(harvest_root or project_root),
             "--board", str(board_dir / "board.json"),
             "--port", str(port),
             "--bucket-min", str(bucket_min),
             "--chunk-size", str(chunk_size),
-            "--show-lifecycle", "--recent-first"]
+            "--recent-first", "--mode", mode]
 
-    # Two-tier fill so the user can start working immediately:
-    #   TIER 1 — the last 1 day, newest-first → the most relevant cards fly in
-    #            within seconds.
-    #   TIER 2 — the rest of the window (older than 1 day), backfilling in the
-    #            background while the user works. Skipped if days <= 1.
-    # This runs in a daemon thread; card writes serialize through the server's
-    # write lock, so a concurrent user editing the board cannot corrupt it.
+    # INLINE (default, free): one fast pass over the whole window that stages
+    # extraction_pending.json — main Claude (the session the user is already in)
+    # emits the cards at no Haiku cost. No fly/tiering here: staging is instant.
+    if mode == "inline":
+        print("inline bootstrap: staging extraction_pending.json (no Haiku)",
+              file=sys.stderr)
+        try:
+            subprocess.run(base + ["--days", str(days)], timeout=600)
+        except Exception as e:
+            print(f"inline bootstrap stage failed: {e}", file=sys.stderr)
+        return
+
+    # HAIKU (opt-in): two-tier fly fill so the user can start working while it
+    # backfills. TIER 1 = last 1d (fast); TIER 2 = older history, in background.
+    # Daemon thread; writes serialize through the server lock — no corruption.
+    base += ["--show-lifecycle"]
     tiers = [("tier-1 (last 1d)", ["--days", "1"])]
     if days > 1:
         tiers.append((f"tier-2 (older, ≤{days}d)",
@@ -1044,10 +1057,11 @@ def main():
                     help="Discover sessions touched in the last N days (default 7)")
     ap.add_argument("--discover-max", type=int, default=20,
                     help="Cap how many tasks become cards on bootstrap (default 20, discover mode only)")
-    ap.add_argument("--bootstrap-mode", choices=["hourly", "discover"], default="hourly",
-                    help="How bootstrap fills the board: 'hourly' (default) = high-compute "
-                         "hourly_extractor (Haiku-per-bucket, flying quality cards); "
-                         "'discover' = cheap discover2 plop (no API key)")
+    ap.add_argument("--bootstrap-mode", choices=["inline", "haiku", "discover"], default="inline",
+                    help="How bootstrap fills the board: 'inline' (default) = FREE — stage "
+                         "extraction_pending.json for the main Claude session to emit (no "
+                         "Haiku cost, highest quality); 'haiku' = claude -p per bucket "
+                         "(costs usage, runs in background); 'discover' = cheap discover2 plop")
     ap.add_argument("--bucket-min", type=int, default=30,
                     help="hourly bootstrap: minutes per bucket (default 30)")
     ap.add_argument("--chunk-size", type=int, default=2,
@@ -1102,14 +1116,15 @@ def main():
                 #                       cards (the chosen startup behaviour, #268).
                 #   discover          — cheap discover2 'plop' (no API key needed).
                 if not args.no_discover:
-                    if args.bootstrap_mode == "hourly" and not args.legacy_discover:
+                    if args.bootstrap_mode in ("inline", "haiku") and not args.legacy_discover:
                         threading.Thread(
                             target=_stream_hourly_cards,
                             args=(start, board_dir, args.port,
                                   args.discover_days, args.bucket_min,
                                   args.chunk_size,
                                   args.harvest_project.resolve()
-                                  if args.harvest_project else None),
+                                  if args.harvest_project else None,
+                                  args.bootstrap_mode),
                             daemon=True,
                         ).start()
                     else:

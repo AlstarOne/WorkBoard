@@ -672,6 +672,28 @@ The template `board.json` ships with **six** columns in this canonical left-to-r
 
 ---
 
+## §J — Inline extraction: process `extraction_pending.json` (#247, the FREE default)
+
+Bootstrap defaults to `--bootstrap-mode inline`: rather than spending Haiku, `serve.py` stages the bucketed history into `<board>/extraction_pending.json` and lets **you (main Claude)** emit the cards — free (no extra API/usage), no key required, and higher quality than Haiku since you have full context. The SessionStart hook surfaces a `📋 INLINE EXTRACTION PENDING` line when the file exists.
+
+**When you see that nudge (or find the file), process it — don't ask:**
+
+1. Read `extraction_pending.json`. It has `board`, `card_py`, a `card_format` (the exact schema + routing rules), `instructions`, and a `chunks` array (each: `label`, `bucket_ts_iso`, `digest`) ordered **newest-first**.
+2. For **each chunk**, read its `digest` and identify the discrete units of work per `card_format`. For each unit, emit:
+   ```bash
+   python3 <card_py> --board <board> add --column COL --priority PRIO \
+     --title "clean title (NO code prefix)" [--code CODE] \
+     --origin "the user's WHY" --notes "what/how/state; cite the SHA if a COMMIT line is in the digest" \
+     --created-at <bucket_ts_iso> [--tag T]
+   ```
+   For a `done` card, fly it: `python3 <card_py> --board <board> fly <num> done --pause-ms 150`.
+3. Same quality bar as the live board: clean titles, `code` only for distinctly-named features/systems (~half), SHA citations in notes, distinct origin (WHY) vs notes (WHAT).
+4. **Delete `extraction_pending.json` when all chunks are done.**
+
+`--bootstrap-mode haiku` (opt-in) does this with `claude -p` instead — costs usage but runs in the background without spending your context. `--bootstrap-mode discover` is the zero-LLM heuristic floor.
+
+---
+
 ## What you must NOT do
 
 - **Don't skip the greeting or signoff.** They make you visible.
