@@ -37,6 +37,7 @@ HOOK_VARIANTS = {
     "session-start":      ("SessionStart",      "hook_session_start.sh"),
     "user-prompt-submit": ("UserPromptSubmit",  "hook_user_prompt.sh"),
     "pre-tool-use":       ("PreToolUse",        "hook_pre_tool_use.sh"),
+    "stop":               ("Stop",              "hook_stop.sh"),
 }
 ALL_VARIANTS = tuple(HOOK_VARIANTS.keys())
 # PreToolUse needs a matcher so we only fire on file-mutating tools.
@@ -171,10 +172,11 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("--hook", choices=("session-start", "user-prompt-submit",
-                                       "pre-tool-use", "both", "all"),
+                                       "pre-tool-use", "stop", "both", "all"),
                     default="session-start",
                     help="which hook(s) to install. 'both' = session-start + user-prompt-submit "
-                         "(legacy alias). 'all' = session-start + pre-tool-use (#102 auto-link).")
+                         "(legacy alias). 'all' = session-start + pre-tool-use (#102 auto-link) "
+                         "+ stop (#279 sign-off recon).")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--uninstall", action="store_true", help="remove ALL board-steward hooks")
     ap.add_argument("--status", action="store_true")
@@ -193,8 +195,9 @@ def main() -> int:
         # legacy alias preserved: SessionStart + UserPromptSubmit
         selected = {"session-start", "user-prompt-submit"}
     elif args.hook == "all":
-        # current recommended combo: SessionStart + PreToolUse (no per-prompt nag)
-        selected = {"session-start", "pre-tool-use"}
+        # current recommended combo: SessionStart + PreToolUse + Stop
+        # (digest in / flash on edit / reconcile on sign-off; no per-prompt nag)
+        selected = {"session-start", "pre-tool-use", "stop"}
     else:
         selected = {args.hook}
 

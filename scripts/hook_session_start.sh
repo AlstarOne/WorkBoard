@@ -160,12 +160,23 @@ if [ -f "${pending_file}" ]; then
   pending_line="📋 INLINE EXTRACTION PENDING: ${nchunks} chunk(s) in ${pending_file} — emit cards from each chunk's digest per its instructions (FREE, no Haiku), then delete the file. See SKILL.md §J."
 fi
 
+# Sign-off reconciliation backstop (#279): the previous session's Stop hook may
+# have flagged un-carded work or open In-Progress cards. Surface it so this
+# session closes the gap, then deletes the file.
+recon_line=""
+recon_file="$(dirname "${board_path}")/recon_pending.json"
+if [ -f "${recon_file}" ]; then
+  nreasons="$(python3 -c "import json;print(len(json.load(open('${recon_file}')).get('reasons',[])))" 2>/dev/null || echo "?")"
+  recon_line="🔁 SIGN-OFF RECON PENDING: ${nreasons} item(s) in ${recon_file} — last session may have left work un-carded or cards stuck In-Progress. Review against your memory, create/move cards, then delete the file (stay-by-default)."
+fi
+
 cat <<MSG
 <board-steward-session-start>
 Board: ${board_path}
 ${live_line:-(server down — start: python3 $(dirname "$0")/serve.py --project ${project_dir})}
 ${digest}
 ${pending_line}
+${recon_line}
 
 Protocol: every ship/fix/defer → \`${card_py} add\` or \`${card_py} move\` immediately (no batching). Status queries → \`card.py list\` or digest above, not memory. Detail → \`card.py show <num>\`. Never auto-Read board.json.
 </board-steward-session-start>

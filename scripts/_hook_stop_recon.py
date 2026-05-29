@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+"""Stop-hook session-end reconciliation backstop (#279).
+
+The live "never-miss on sign-off" guarantee. When the agent ends a session,
+nothing else verifies that every substantive work-unit got carded or that
+shipped In-Progress cards moved to Done — that was only ever advisory prose in
+SKILL.md §F. This helper closes the gap.
+
+Reads the Claude Code Stop-hook payload from stdin:
+    {session_id, transcript_path, cwd, stop_hook_active, ...}
+
+It is SELF-CONTAINED (no discover2/hourly_extractor imports) and reads ONLY the
+session's own transcript (transcript_path) — so it's fast and can't hang on a
+580-file glob. It detects:
+  1. UNCARDED WORK — the session shows ship signals (git commit / "shipped" /
+     "deployed") or many file edits, but no card.py add/move/fly ran this
+     session → work likely went un-tracked.
+  2. OPEN IN-PROGRESS — cards still in inprogress at sign-off (gentle reminder
+     to confirm done or leave a note).
+
+When something is found it writes board/recon_pending.json (the existing schema,
+tagged source=stop_recon) so the NEXT SessionStart surfaces it and the next main
+Claude reconciles with full context. Non-blocking, silent-fail, exit 0 always.
+"""
+from __future__ import annotations
+
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+EDIT_TOOLS = {"edit", "write", "multiedit", "notebookedit"}
+EDIT_THRESHOLD = 3          # this many edits w/ no card = uncarded-work signal
+SHIP_RE_WORDS = ("git commit", "shipped", "deployed", "merged", "git push")
+CARD_MARKERS = ("card.py add", "card.py move", "card.py fly", "card.py improve",
+                "card.py bug", "card.py auto-ship", "card.py subtask")
+
+
+def find_board(start: Path) -> Path | None:
+    """Walk up to 8 levels for board/board.json."""
+    cur = start.resolve()
+    for _ in range(8):
+        cand = cur / "board" / "board.json"
+        if cand.is_file():
+            return cand
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    return None
+
+
+def _tool_name(o: dict) -> str:
+    """Extract a tool name from an assistant message's content blocks."""
+    msg = o.get("message") or {}
+    content = msg.get("content")
+    names = []
+    if isinstance(content, list):
+        for blk in content:
+            if isinstance(blk, dict) and blk.get("type") == "tool_use":
+                names.append(str(blk.get("name", "")).lower())
+    return " ".join(names)
+
+
+def _bash_cmd(o: dict) -> str:
+    """Pull Bash command strings from tool_use blocks (lowercased)."""
+    msg = o.get("message") or {}
+    content = msg.get("content")
+    cmds = []
+    if isinstance(content, list):
+        for blk in content:
+            if isinstance(blk, dict) and blk.get("type") == "tool_use":
+                inp = blk.get("input") or {}
+                c = inp.get("command")
+                if isinstance(c, str):
+                    cmds.append(c)
+    return "\n".join(cmds)
+
+
+def scan_transcript(path: Path) -> dict:
+    """Tally this session's activity from its own transcript jsonl."""
+    edits = 0
+    ship_signals = 0
+    card_actions = 0
+    user_turns = 0
+    last_user = ""
+    try:
+        with path.open("r", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                tp = o.get("type")
+                if tp == "user":
+                    user_turns += 1
+                elif tp == "assistant":
+                    names = _tool_name(o)
+                    if names:
+                        for n in names.split():
+                            if n in EDIT_TOOLS:
+                                edits += 1
+                    bash = _bash_cmd(o).lower()
+                    if bash:
+                        if any(w in bash for w in SHIP_RE_WORDS):
+                            ship_signals += 1
+                        if any(m in bash for m in CARD_MARKERS):
+                            card_actions += 1
+    except OSError:
+        pass
+    return {
+        "edits": edits,
+        "ship_signals": ship_signals,
+        "card_actions": card_actions,
+        "user_turns": user_turns,
+    }
+
+
+def load_board(board_path: Path) -> dict:
+    try:
+        return json.loads(board_path.read_text(errors="replace"))
+    except Exception:
+        return {}
+
+
+def main() -> int:
+    try:
+        payload = json.load(sys.stdin)
+    except Exception:
+        return 0
+
+    # Loop guard: if a prior Stop hook is still active, don't re-enter.
+    if payload.get("stop_hook_active"):
+        return 0
+
+    cwd = payload.get("cwd") or ""
+    transcript = payload.get("transcript_path") or ""
+    if not cwd:
+        return 0
+    board_path = find_board(Path(cwd))
+    if board_path is None:
+        return 0
+
+    act = scan_transcript(Path(transcript)) if transcript else {
+        "edits": 0, "ship_signals": 0, "card_actions": 0, "user_turns": 0}
+
+    board = load_board(board_path)
+    cards = board.get("cards") or []
+    inprogress = [c for c in cards
+                  if c.get("column") == "inprogress" and not c.get("doneAt")]
+
+    # Findings.
+    uncarded_risk = (
+        (act["ship_signals"] > 0 or act["edits"] >= EDIT_THRESHOLD)
+        and act["card_actions"] == 0
+    )
+    # Nothing worth surfacing → stay silent (don't nag on a read-only session).
+    if not uncarded_risk and not inprogress:
+        return 0
+
+    reasons = []
+    if uncarded_risk:
+        reasons.append(
+            f"This session made {act['edits']} file edit(s) and "
+            f"{act['ship_signals']} ship-signal(s) (commit/push/'shipped') but "
+            f"ran NO card.py add/move/fly — substantive work may be un-carded. "
+            f"Create cards for it (Task→In-Progress→Done) per SKILL.md §E/§J."
+        )
+    if inprogress:
+        ip = ", ".join(f"#{c.get('num')} {c.get('code') or c.get('title','')[:30]}"
+                       for c in inprogress[:8])
+        reasons.append(
+            f"{len(inprogress)} card(s) still In-Progress at sign-off ({ip}). "
+            f"Confirm each is actually done (→ move to done w/ writeup) or leave "
+            f"a note on why it's still open."
+        )
+
+    payload_out = {
+        "written_at": datetime.now(timezone.utc).isoformat(),
+        "source": "stop_recon",
+        "board": str(board_path),
+        "session_id": payload.get("session_id"),
+        "instructions": (
+            "Session-end reconciliation backstop (#279). The PREVIOUS session "
+            "ended with possible gaps. Review the reasons below against your "
+            "memory of that work, then either create/move the missing cards via "
+            "`card.py add/move/fly` or, if everything is actually fine, just "
+            "delete this file. Stay-by-default — don't invent cards."
+        ),
+        "activity": act,
+        "reasons": reasons,
+        "inprogress": [{"num": c.get("num"), "title": c.get("title"),
+                        "code": c.get("code")} for c in inprogress],
+    }
+    try:
+        (board_path.parent / "recon_pending.json").write_text(
+            json.dumps(payload_out, indent=2, ensure_ascii=False))
+    except OSError:
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
