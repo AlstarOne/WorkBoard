@@ -3372,7 +3372,15 @@ function render() {
       wrap.className = 'column-stack';
       wrap.dataset.stackRoot = root.id;
       walkStack(root.id).forEach(col => {
-        const cards = state.cards.filter(c => c.column === col.id);
+        let cards = state.cards.filter(c => c.column === col.id);
+        // #249 — pin the "current work" card (most-recent in In Progress) to
+        // the TOP of the column so every session opens showing what you're
+        // working on. Stable sort preserves the order of the rest.
+        if (col.id === 'inprogress') {
+          const aid = activeWorkId();
+          if (aid) cards = cards.slice().sort((a, b) =>
+            a.id === aid ? -1 : b.id === aid ? 1 : 0);
+        }
         wrap.appendChild(renderColumn(col, cards));
       });
       board.appendChild(wrap);
@@ -3398,6 +3406,10 @@ function render() {
     if (card) renderModal(card);
     else { _openCardId = null; closeModal(); }
   }
+
+  // #249 — reapply the In-Progress pulse from state after the DOM is rebuilt
+  // (board.innerHTML was wiped above). This is what makes it survive refresh.
+  refreshActiveWork();
 }
 
 // ===== Tag colour + taxonomy lookup =====
@@ -4575,21 +4587,42 @@ function refreshColumnCount(colId) {
   if (ct && state) ct.textContent = state.cards.filter(c => c.column === colId).length;
 }
 
-// #164 v4 — pulse follows LIVE TRANSITIONS into In Progress, not derived
-// state. Stale cards sitting in In Progress (from prior sessions, or before
-// page load) stay quiet. Only when Claude/the user moves a card INTO In
-// Progress during this session does the pulse light up. Moving it out
-// (or any other card moving in) drops the class. Page load = silent.
-function applyActiveWorkTransition(cardId, fromCol, toCol) {
-  if (toCol === 'inprogress' && fromCol !== 'inprogress') {
-    document.querySelectorAll('.card.active-work').forEach(c =>
-      c.classList.remove('active-work'));
-    const el = findCardEl(cardId);
+// #249 v5 — the In-Progress pulse is DERIVED from board state, not a
+// live-only DOM flag. The ONE most-recently-touched card currently in In
+// Progress pulses; every other card stays quiet. Because it's recomputed
+// from state.cards (not set once by a transition event), it SURVIVES page
+// refresh AND any full/partial re-render — the two ways the old v4 logic
+// silently lost the pulse. No connection or timer: it's a CSS class toggled
+// from state, recomputed after every render() and SSE mutation.
+// The ONE "current work" card: most-recently-touched card in In Progress.
+// Shared by the pulse (refreshActiveWork) and the top-pin in render() so both
+// agree on the same card. updatedAt is ISO-8601, so string compare = time order.
+function activeWorkId() {
+  if (!state) return null;
+  const inProg = state.cards.filter(c => c.column === 'inprogress');
+  const active = inProg.reduce(
+    (a, b) => (a && (a.updatedAt || '') >= (b.updatedAt || '') ? a : b),
+    null
+  );
+  return active ? active.id : null;
+}
+
+function refreshActiveWork() {
+  if (!state || _view !== 'board') return;
+  const activeId = activeWorkId();
+  document.querySelectorAll('.card.active-work').forEach(c => {
+    if (c.dataset.cardId !== activeId) c.classList.remove('active-work');
+  });
+  if (activeId) {
+    const el = findCardEl(activeId);
     if (el) el.classList.add('active-work');
-  } else if (fromCol === 'inprogress' && toCol !== 'inprogress') {
-    const el = findCardEl(cardId);
-    if (el) el.classList.remove('active-work');
   }
+}
+
+// Back-compat shim: existing callers fire on a live move-in/out. The pulse is
+// now derived from state, so the from/to args are advisory — we just recompute.
+function applyActiveWorkTransition(_cardId, _fromCol, _toCol) {
+  refreshActiveWork();
 }
 
 // #102 BOARD-AUTO-LINK: server broadcasts card-flash via /flash?card=N&file=PATH
@@ -4758,6 +4791,10 @@ function handleCardUpdated({ card, fromColumn, toColumn }) {
     setTimeout(() => newEl.classList.remove('flashing','pulsing'), 1300);
     logEvent('move', `#${card.num} edited`, card);
   }
+  // #249 — the in-place branch builds a fresh el without active-work; an edit
+  // to the active card (subtask check, priority) would otherwise drop its
+  // pulse. Recompute from state so the right card keeps pulsing.
+  refreshActiveWork();
 }
 
 function handleCardRemoved({ id }) {
@@ -4773,6 +4810,9 @@ function handleCardRemoved({ id }) {
     el.remove();
     refreshColumnCount(colId);
   }, { once: true });
+  // #249 — if the removed/moved card was the pulsing one, hand the pulse to
+  // the next most-recent In Progress card (or none).
+  refreshActiveWork();
 }
 
 // Shared delete path used by the modal Delete button, right-click on a
