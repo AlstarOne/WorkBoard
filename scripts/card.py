@@ -336,6 +336,27 @@ def _ensure_super_urgent_col(d: dict) -> bool:
     return True
 
 
+def _ensure_ideas_col(d: dict) -> bool:
+    """Insert the ideas column if missing. Returns True iff a new column was
+    created. Idempotent. Inserted after backlog if backlog exists, else at
+    the head of todo-kind columns."""
+    cols = d.setdefault("columns", [])
+    if any(c.get("id") == "ideas" for c in cols):
+        return False
+    insert_at = 0
+    for i, c in enumerate(cols):
+        if c.get("id") == "backlog":
+            insert_at = i + 1
+            break
+    cols.insert(insert_at, {
+        "id": "ideas",
+        "name": "💡 Ideas",
+        "kind": "todo",
+        "stackUnder": None,
+    })
+    return True
+
+
 def _log_auto_urgent(board: Path, card_num: int, keyword: str, created_col: bool) -> None:
     """Best-effort telemetry: append one event to events.jsonl. Silent on failure
     so card.py adds never break on telemetry hiccups."""
@@ -434,6 +455,17 @@ def cmd_add(args, d, board):
         if target_prio not in ("critical",):
             target_prio = "critical"
 
+    # Auto-card (#100): --auto signals intent-detected creation. Defaults the
+    # column to 'ideas' when caller didn't override, ensures the col exists,
+    # and stamps meta.autoCreated so board.html can pop an undo toast.
+    auto_card = bool(getattr(args, "auto", False))
+    auto_card_col_created = False
+    if auto_card and not auto_urgent_kw:
+        if args.column == "backlog":  # caller didn't override the default
+            target_col = "ideas"
+        if target_col == "ideas":
+            auto_card_col_created = _ensure_ideas_col(d)
+
     card = {
         "num": d["nextNum"],
         "id": cid,
@@ -452,6 +484,11 @@ def cmd_add(args, d, board):
         "linkedCards": [],
         "subtasks": [],
     }
+    if auto_card:
+        card["meta"] = {
+            "autoCreated": True,
+            "autoSource": (getattr(args, "auto_source", None) or "").strip(),
+        }
     d["cards"].append(card)
     d["nextNum"] += 1
 
@@ -470,6 +507,12 @@ def cmd_add(args, d, board):
         col_note = " (🚨 col created)" if auto_urgent_col_created else ""
         print(f"+ #{card['num']} {card['code'] or card['id']} → {target_col}{col_note} "
               f"[auto-urgent: '{auto_urgent_kw}'] (rev {rev})")
+    elif auto_card:
+        col_note = " (💡 col created)" if auto_card_col_created else ""
+        src = (getattr(args, "auto_source", None) or "").strip()
+        src_note = f" [auto-card: '{src}']" if src else " [auto-card]"
+        print(f"+ #{card['num']} {card['code'] or card['id']} → {target_col}{col_note}"
+              f"{src_note} (rev {rev})")
     else:
         print(f"+ #{card['num']} {card['code'] or card['id']} → {target_col} (rev {rev})")
 
@@ -1020,6 +1063,13 @@ def build_parser():
                     help="Skip urgency-keyword detection in title/origin (#85). Use when "
                          "the words 'urgent/asap/blocker/...' are part of the card content, "
                          "not a real urgency signal.")
+    pa.add_argument("--auto", action="store_true",
+                    help="Mark this card as auto-created from intent detection (#100). "
+                         "Defaults --column to 'ideas' (created if missing) and stamps "
+                         "meta.autoCreated so the board pops a 5s Undo toast.")
+    pa.add_argument("--auto-source", default=None,
+                    help="The user phrase that triggered auto-card (e.g. 'I have an idea:'). "
+                         "Stored in meta.autoSource + shown in the Undo toast.")
     pa.set_defaults(fn=cmd_add)
 
     # update

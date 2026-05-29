@@ -235,6 +235,43 @@ git log --oneline --since="$(date -v-2H +%FT%T)"
 
 ---
 
+### G. Auto-card on idea-intent (the VISION zero-input promise · #100)
+
+VISION §4 + "the test" require that when the user voices an intent that isn't this turn's task, **a card materialises on its own** — no "want me to add that?" prompt, no copy-paste. The board pops a 5-second Undo toast so the user can dismiss false positives without typing.
+
+**Fire `card.py add --auto` when the user prompt contains, verbatim, one of these intent markers** (case-insensitive, must be at the start of a clause):
+
+- `I have an idea[:.]` / `idea[:.]`
+- `todo[:.]` / `to[- ]do[:.]`
+- `remember to ` / `note to self[:.]`
+- `later we should` / `we should also` / `we'll need to`
+- `btw can we` / `btw could you` / `btw should we`
+- `what if we ` (only when paired with a deferred verb like "tried", "added", "added later")
+
+**The rule has 5 hard skips** — these protect against the over-eager class the user pre-emptively flagged:
+
+1. **The user is asking you to do it now in the same turn.** "Let's also fix the auth bug" while you're already coding the auth fix → it's the *task*, not a card. Only fire when the intent is clearly deferred ("later", "next time", "remind me", "future", "someday").
+2. **The intent is < 20 chars after the marker.** Too short to be a useful card; the user is probably mid-sentence ("btw can we go").
+3. **It's already an open card.** Grep `card.py list` for the same code/title keywords before firing.
+4. **The user is recapping/quoting prior conversation.** "Earlier I said 'todo: X'" — skip.
+5. **The user said `nvm` / `wait` / `actually` in the same turn or the next 1-2 turns.** Roll the auto-card back via the Undo toast guidance you give them, or `card.py rm` directly if the toast has expired.
+
+**The canonical command:**
+
+```bash
+python3 ~/.agents/skills/board-steward/scripts/card.py add \
+  --title "<the deferred verb-phrase, ≤70 chars>" \
+  --auto \
+  --auto-source "<the verbatim marker, e.g. 'I have an idea:'>" \
+  --origin "<the user's full quoted sentence>"
+```
+
+`--auto` defaults `--column` to `💡 Ideas` (creates it if missing) and stamps `meta.autoCreated=true` so the board pops the Undo toast on the originating client. If you have a higher-confidence read on column (e.g. user said "todo: ship the README" → mandatory because they said *ship*), pass `--column` explicitly to override.
+
+**Confidence bias: under-engage when uncertain.** A missed auto-card is recoverable (the user can ask). An over-eager auto-card eats their trust the same way the #84 silent-drift class did. If the marker is ambiguous (`what if we`), default to NOT firing and instead surface a one-line "want me to file that as a card?" *only* when the deferred-intent is the user's whole turn (not a side-note in a coding ask).
+
+---
+
 ## Saving cleanly — prefer `card.py` (v3 default)
 
 For 95% of mutations, **don't write Python dict literals inline** — use `card.py`. It handles load + mutate + `rev` bump + `savedAt`/`savedBy='claude'` + atomic write + `index.json` regen in one shot. Saves tokens and prevents drift across hand-rolled scripts.
