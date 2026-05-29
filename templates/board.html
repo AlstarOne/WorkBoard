@@ -2033,6 +2033,7 @@ function commitCardDrag() {
   card.updatedAt = now();
   if (targetCol === 'done' && !card.doneAt) card.doneAt = card.updatedAt;
   if (targetCol !== 'done') card.doneAt = null;
+  recordMove(card, _cardDrag.srcCol, targetCol);   // #258 movement history
   // #254 — active-work follows a live MOVE into In Progress (persisted via the
   // scheduleSave() below, so it survives refresh). Parked cards never light up.
   if (targetCol === 'inprogress' && _cardDrag.srcCol !== 'inprogress') {
@@ -2831,6 +2832,7 @@ function renderModal(card) {
     card.updatedAt = now();
     if (card.column === 'done' && !card.doneAt) card.doneAt = card.updatedAt;
     if (card.column !== 'done') card.doneAt = null;
+    recordMove(card, fromCol, card.column);   // #258 movement history
     // #254 — active-work follows a live move into In Progress (persisted).
     if (card.column === 'inprogress' && fromCol !== 'inprogress') state.activeWorkId = card.id;
     else if (fromCol === 'inprogress' && card.column !== 'inprogress' && state.activeWorkId === card.id) state.activeWorkId = null;
@@ -4629,6 +4631,14 @@ function refreshActiveWork() {
     const el = findCardEl(activeId);
     if (el) el.classList.add('active-work');
   }
+}
+
+// #258 — append a movement event {from, to, at} to a card's history so every
+// column shift is timestamped (training-data label timeline, mirrors card.py
+// _record_move). No-op when the column doesn't actually change.
+function recordMove(card, fromCol, toCol) {
+  if (fromCol === toCol) return;
+  (card.history = card.history || []).push({ from: fromCol, to: toCol, at: now() });
 }
 
 // Live transition handler — set/clear the persisted active-work id on a real

@@ -535,6 +535,7 @@ def cmd_add(args, d, board):
     # #254 — a card born directly into In Progress is active work too (parity
     # with the UI's handleCardAdded → applyActiveWorkTransition).
     _set_active_work(d, card, "", target_col)
+    _record_move(card, None, target_col)
     rev = atomic_save(board, d)
     if auto_urgent_kw:
         _log_auto_urgent(board, card["num"], auto_urgent_kw, auto_urgent_col_created)
@@ -638,6 +639,18 @@ def _set_active_work(d, card, old_col, new_col):
         d["activeWorkId"] = None
 
 
+def _record_move(card, old_col, new_col):
+    """#258 — append a movement event {from, to, at} to the card's history so
+    every column shift is timestamped. A clean structured label timeline for the
+    transition-prediction model (#251) — lives in board.json, no JSONL parsing.
+    Creation is recorded with from=None. No-op when the column doesn't change."""
+    if old_col == new_col:
+        return
+    card.setdefault("history", []).append({
+        "from": old_col, "to": new_col, "at": now_iso(),
+    })
+
+
 def cmd_move(args, d, board):
     c = find_card(d, args.ref)
     old = c["column"]
@@ -677,6 +690,7 @@ def cmd_move(args, d, board):
         c["writeup"] = wu
     c["updatedAt"] = now_iso()
     _set_active_work(d, c, old, args.column)
+    _record_move(c, old, args.column)
     rev = atomic_save(board, d)
     suffix = " + writeup" if wu is not None else ""
     print(f"→ #{c['num']} {old} → {args.column}{suffix} (rev {rev})")
@@ -767,6 +781,7 @@ def cmd_fly(args, d, board):
 
     c["updatedAt"] = now_iso()
     _set_active_work(d, c, old, args.column)
+    _record_move(c, old, args.column)
     rev = atomic_save(board, d)
 
     badge = " 🐞" if args.bug else (" ✨" if args.improve else "")
@@ -809,6 +824,7 @@ def cmd_improve(args, d, board):
     c["lastTouchedSubtask"] = sid
     c["updatedAt"] = now_iso()
     _set_active_work(d, c, old, "inprogress")
+    _record_move(c, old, "inprogress")
     rev = atomic_save(board, d)
     print(f"✨ #{c['num']} {old} → inprogress (+subtask {sid}) (rev {rev})")
 
@@ -847,6 +863,7 @@ def cmd_bug(args, d, board):
     c["lastTouchedSubtask"] = sid
     c["updatedAt"] = now_iso()
     _set_active_work(d, c, old, "inprogress")
+    _record_move(c, old, "inprogress")
     rev = atomic_save(board, d)
     print(f"🐞 #{c['num']} {old} → inprogress (+bug tag, +subtask {sid}) (rev {rev})")
 
@@ -1016,6 +1033,7 @@ def cmd_auto_ship(args, d, board):
     c["writeup"] = writeup
     c["updatedAt"] = ts
     _set_active_work(d, c, old, "done")
+    _record_move(c, old, "done")
     rev = atomic_save(board, d)
     print(f"✈ #{c['num']} {old} → done [auto-ship, {len(hits)} commit hits] (rev {rev})")
 
