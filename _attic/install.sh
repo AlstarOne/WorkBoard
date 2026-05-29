@@ -27,6 +27,11 @@ if [ "$(basename "$REPO")" = "_attic" ]; then REPO="$(dirname "$REPO")"; fi
 SCRIPTS="${REPO}/scripts"
 PY="$(command -v python3 || command -v python)"
 
+# Remember the REAL Claude config dir BEFORE --demo overrides it — the harvest
+# extractor's `claude -p` calls need real credentials to authenticate (the
+# isolated demo config dir is empty → every Haiku call would exit 1).
+ORIG_CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-}"
+
 # ---- defaults ----------------------------------------------------------------
 PROJECT="$(pwd)"
 PORT=7891
@@ -35,6 +40,8 @@ OPEN_BROWSER=1
 DO_AUTOSTART=1
 DO_HOOKS=1
 DO_SKILL=1
+HARVEST=""          # if set: mine THIS real project's history into the (isolated) board
+HARVEST_DAYS=2      # history window for --harvest
 
 usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
 
@@ -43,6 +50,8 @@ while [ $# -gt 0 ]; do
     --project) PROJECT="$2"; shift 2 ;;
     --port)    PORT="$2"; shift 2 ;;
     --demo)    DEMO=1; shift ;;
+    --harvest) HARVEST="$2"; shift 2 ;;
+    --harvest-days) HARVEST_DAYS="$2"; shift 2 ;;
     --no-open) OPEN_BROWSER=0; shift ;;
     --no-autostart) DO_AUTOSTART=0; shift ;;
     --no-hooks)     DO_HOOKS=0; shift ;;
@@ -51,6 +60,13 @@ while [ $# -gt 0 ]; do
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+
+# --harvest fills the board from a DIFFERENT project's history than where the
+# board lives (two-project split) — the only safe way to demo the high-compute
+# hourly fly fill without co-locating board.json inside the harvested repo.
+if [ -n "$HARVEST" ]; then
+  HARVEST="$(cd "$HARVEST" && pwd)" || { echo "✗ --harvest dir not found" >&2; exit 1; }
+fi
 
 say()  { printf '\033[1;36m▸ %s\033[0m\n' "$*"; }
 ok()   { printf '\033[1;32m  ✓ %s\033[0m\n' "$*"; }
@@ -102,7 +118,12 @@ if lsof -ti "tcp:${PORT}" >/dev/null 2>&1; then
   lsof -ti "tcp:${PORT}" | xargs kill 2>/dev/null || true
   sleep 0.4
 fi
-nohup "$PY" "${SCRIPTS}/serve.py" --project "$PROJECT" --port "$PORT" --bootstrap \
+# With --harvest the board lives in $PROJECT but history is mined from a
+# different repo, so suppress serve.py's own (empty-project) discovery and run
+# the extractor ourselves below.
+BOOT_DISCOVER=""
+[ -n "$HARVEST" ] && BOOT_DISCOVER="--no-discover"
+nohup "$PY" "${SCRIPTS}/serve.py" --project "$PROJECT" --port "$PORT" --bootstrap $BOOT_DISCOVER \
   >"${PROJECT}/.board-server.log" 2>&1 &
 # Wait for /health.
 for _ in $(seq 1 25); do
@@ -116,6 +137,29 @@ if curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
   ok "server live at http://127.0.0.1:${PORT}  (${CARDS} cards)"
 else
   warn "server did not come up — see ${PROJECT}/.board-server.log"
+fi
+
+# Open the browser NOW (before the harvest fill) so the user watches cards fly
+# in live, then run the high-compute hourly extractor against the real history.
+if [ -n "$HARVEST" ] && [ "$SERVER_OK" = "1" ]; then
+  URL="http://127.0.0.1:${PORT}"
+  if [ "$OPEN_BROWSER" = "1" ]; then
+    if command -v open >/dev/null 2>&1; then open "$URL"
+    elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$URL"; fi
+    OPEN_BROWSER=0   # don't reopen at the end
+  fi
+  say "filling board from ${HARVEST} history (hourly chunk=2 fly, last ${HARVEST_DAYS}d)"
+  # Run with the REAL config dir so `claude -p` can authenticate; if the user
+  # never set one, unset it so claude falls back to ~/.claude.
+  if [ -n "$ORIG_CLAUDE_CONFIG_DIR" ]; then
+    HARVEST_ENV=(env "CLAUDE_CONFIG_DIR=$ORIG_CLAUDE_CONFIG_DIR")
+  else
+    HARVEST_ENV=(env -u CLAUDE_CONFIG_DIR)
+  fi
+  "${HARVEST_ENV[@]}" "$PY" "${SCRIPTS}/hourly_extractor.py" \
+    --project "$HARVEST" --board "${PROJECT}/board/board.json" --port "$PORT" \
+    --days "$HARVEST_DAYS" --bucket-min 30 --chunk-size 2 --show-lifecycle \
+    || warn "harvest fill reported an issue (non-fatal)"
 fi
 
 # ---- 3. hooks ----------------------------------------------------------------
