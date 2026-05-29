@@ -21,8 +21,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
+
+# A real session header: the marker ALONE on its own line, with a uuid. Anchored
+# so the same string quoted inside verbatim content (indented commands, prose)
+# is never mistaken for a block boundary.
+_MARK_RE = re.compile(r"^<!-- session: [0-9a-fA-F-]{36} -->$", re.M)
 
 PROJECTS = Path.home() / ".claude" / "projects"
 HIST_DIR = Path.home() / "Desktop" / "conversation_history"
@@ -155,13 +161,17 @@ def main():
         return
 
     existing = dst.read_text(errors="replace")
-    if marker in existing:
-        # Idempotent re-render: replace this session's block (marker → next
-        # session marker or EOF) so the file always reflects the full session.
-        start = existing.index(marker)
-        nxt = existing.find("<!-- session: ", start + len(marker))
-        end = nxt if nxt != -1 else len(existing)
-        updated = existing[:start] + body.lstrip("\n") + ("\n" + existing[end:].lstrip("\n") if nxt != -1 else "")
+    # This session's header as a standalone line (not a quoted-in-content copy).
+    this = re.search(r"^" + re.escape(marker) + r"$", existing, re.M)
+    if this:
+        # Idempotent re-render: replace this session's block (its header → the
+        # next REAL session header or EOF) so the file always reflects the full
+        # session. _MARK_RE ignores the marker string quoted inside content.
+        start = this.start()
+        nxt = _MARK_RE.search(existing, this.end())
+        end = nxt.start() if nxt else len(existing)
+        tail = existing[end:].lstrip("\n")
+        updated = existing[:start] + body.rstrip("\n") + "\n" + (("\n" + tail) if tail else "")
         dst.write_text(updated)
         print(f"re-rendered verbatim session {path.stem} → {dst.name} (replaced block)")
     else:
