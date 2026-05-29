@@ -51,6 +51,7 @@ if _scripts_dir not in sys.path:
 
 import _boardio  # noqa: E402  (write-safety: flock + rolling backups)
 import _render   # noqa: E402  (shared markdown/html renderers — #115 export)
+import _metrics  # noqa: E402  (velocity metrics — #114)
 
 _write_lock = threading.Lock()
 _clients_lock = threading.Lock()
@@ -667,6 +668,20 @@ class BoardHandler(BaseHTTPRequestHandler):
             if not idx.exists():
                 regen_index(self.board_dir)
             self._send_file(idx, "application/json")
+            return
+
+        if path == "/metrics":
+            # #114 BOARD-METRICS — velocity JSON. ?since=Nd window (default 7).
+            qs = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            raw = (qs.get("since") or ["7"])[0].strip().rstrip("d")
+            since_days = int(raw) if raw.isdigit() and int(raw) > 0 else 7
+            try:
+                state = json.loads((self.board_dir / "board.json").read_text())
+            except Exception:
+                self._send(500, b'{"error":"board.json unreadable"}')
+                return
+            self._send(200, json.dumps(_metrics.compute(state, since_days),
+                                       ensure_ascii=False).encode("utf-8"))
             return
 
         if path in ("/export.md", "/export.html"):

@@ -74,6 +74,7 @@ if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 import _boardio  # noqa: E402  (write-safety: flock + rolling backups)
 import _render   # noqa: E402  (shared markdown/html renderers — #115 export/wiki)
+import _metrics  # noqa: E402  (velocity metrics — #114)
 
 # Set True by main() while it holds the cross-process file lock for the
 # no-server direct-write path. atomic_save reads it to skip POST + re-lock.
@@ -1627,6 +1628,17 @@ def cmd_wiki(args, d, board):
     print(_render.to_markdown(d, recent=args.recent))
 
 
+def cmd_metrics(args, d, board):
+    """5.5b (#114) — velocity metrics: throughput, cycle time, blockers,
+    priority drift. Text summary by default; --json for the raw dict (same
+    payload serve.py /metrics returns)."""
+    m = _metrics.compute(d, since_days=args.since_days)
+    if getattr(args, "json", False):
+        print(json.dumps(m, ensure_ascii=False, indent=2))
+    else:
+        print(_metrics.to_text(m))
+
+
 def cmd_export(args, d, board):
     """5.5c (#115) — write a shareable snapshot (Markdown or HTML) to a file or
     stdout. Format inferred from --to extension (.html → HTML, else Markdown),
@@ -1870,6 +1882,15 @@ def build_parser():
     pwk.add_argument("--recent", type=int, default=10,
                      help="how many recently-shipped cards to lead with (default 10)")
     pwk.set_defaults(fn=cmd_wiki)
+
+    # metrics (5.5b · #114) — velocity dashboard data
+    pmt = sub.add_parser("metrics",
+                         help="velocity metrics: throughput, cycle time, blockers, "
+                              "priority drift. --json for the raw dict.")
+    pmt.add_argument("--since-days", type=int, default=7, dest="since_days",
+                     help="window in days (default 7)")
+    pmt.add_argument("--json", action="store_true", help="emit the raw metrics dict")
+    pmt.set_defaults(fn=cmd_metrics)
 
     # export (5.5c · #115) — write a shareable HTML/Markdown snapshot
     pex = sub.add_parser("export",
