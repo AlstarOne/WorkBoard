@@ -44,7 +44,7 @@ Your job: identify the DISCRETE UNITS OF WORK that happened in each bucket. Each
 Output: a JSON ARRAY of card objects. Each card:
 {
   "title": "verb + noun phrase, ≤70 chars. Examples: 'BOARD-FLY: atomic-hop primitive', 'Fix card-drag freeze on iPhone', 'Investigate convo dedup'. NO conversational openers (btw, can u, oh wait). NO verbatim user wording — summarize the WORK.",
-  "code": "short kebab or CAPS code from noun cluster, ≤24 chars (e.g. 'BOARD-FLY', 'DISCOVER2'). Empty string if not a build/feature card.",
+  "code": "short CAPS badge from the noun cluster, ≤24 chars (e.g. 'BOARD-FLY', 'DISCOVER2', 'SIM-60D'). Give one to EVERY card that names a concrete feature/system/fix — it renders as a colored badge and is how work is referenced. Only leave empty for a pure observation/note with no nameable subject.",
   "column": "one of: task | backlog | inprogress | done | mandatory | notes",
   "priority": "low | mid | critical",
   "origin": "WHY this work exists — the user's goal or the trigger, in their voice/intent (not yours). ≤200 chars. e.g. 'User wanted card-drag to work on iPhone where the columns stack vertically and the old handler froze.' This is the 'why this exists' a teammate reads to understand the card at a glance. Empty string only if genuinely unknowable.",
@@ -512,6 +512,10 @@ def _card_add(card_py: Path, board: Path, card: dict) -> int | None:
             "--column", column, "--priority", priority,
             "--title", title, "--origin", origin[:400],
             "--tag", "discovered"]
+    # Set the code FIELD (not just the title prefix) so the colored code badge
+    # renders on the card — matching the manual board (e.g. SIM-60D, BOARD-SLIM).
+    if code:
+        args += ["--code", code[:24]]
     # Stamp createdAt with the bucket's actual time so the board sorts
     # chronologically without an end-pass.
     bucket_ts = card.get("_bucket_ts_iso")
