@@ -689,8 +689,14 @@ Bootstrap defaults to `--bootstrap-mode inline`: rather than spending Haiku, `se
    python3 <card_py> --board <board> fly <num> inprogress --pause-ms 400
    python3 <card_py> --board <board> fly <num> done --pause-ms 400 --writeup "<the notes>"
    # inprogress card → one hop: fly <num> inprogress. backlog/mandatory/notes → leave in that column (no fly).
+   # RICHER PATH (#294) — only when the digest SHOWS it (never invented): if a done card later BROKE
+   # (regression/revert/reopen) and was fixed, reconstruct the real bounce so history[] + 🐞 match reality:
+   python3 <card_py> --board <board> fly <num> inprogress --bug "<what broke>"   # → 🐞 subtask + bug tag
+   python3 <card_py> --board <board> fly <num> done --writeup "<the fix>"        # bug tag auto-strips
+   # ENHANCEMENT after ship → use --improve "<what's added>" instead of --bug. (Haiku path: emit a
+   # `transitions` array on the card — [{"to":"inprogress","kind":"bug","reason":"..."},{"to":"done"}].)
    ```
-3. Same quality bar as the live board: clean titles, `code` only for distinctly-named features/systems (~half), SHA citations in notes, distinct origin (WHY) vs notes (WHAT).
+3. Same quality bar as the live board: clean titles, `code` only for distinctly-named features/systems (~half), SHA citations in notes, distinct origin (WHY) vs notes (WHAT). **Reconstruct the true lifecycle** — a card that shipped, broke, and was re-fixed should fly back to In Progress as a bug and forward again, not flatten to a single done (#294). Only ever replay hops the digest actually shows.
 4. **Completeness sweep — the "never miss a point" guarantee (priority: mandatory > notes > backlog).** A ship-oriented read catches `done` work (it has commit markers) but *silently drops the categories with NO marker*. After emitting, re-scan **every** chunk digest specifically for:
    - **🚨 mandatory (most important — never miss):** urgency the user voiced — "this is impt", "must", "urgent", "asap", "p0", "blocker", a launch gate. → a `mandatory` card.
    - **📝 notes:** a decision, rationale, or observation that isn't a unit of shippable work. → a `notes` card.

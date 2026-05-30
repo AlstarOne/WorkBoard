@@ -49,7 +49,8 @@ Output: a JSON ARRAY of card objects. Each card:
   "priority": "low | mid | critical",
   "origin": "WHY this work exists — the user's goal or the trigger, in their voice/intent (not yours). ≤200 chars. e.g. 'User wanted card-drag to work on iPhone where the columns stack vertically and the old handler froze.' This is the 'why this exists' a teammate reads to understand the card at a glance. Empty string only if genuinely unknowable.",
   "notes": "What the work actually was: problem → approach → outcome (or current state). 1-3 sentences, ≤300 chars. Concrete — name the file/function/command. If a COMMIT line (a sha) for this work appears in the bucket log, ALWAYS cite its short sha, e.g. 'Shipped in 7b565ff.' For UNFINISHED work, state what's left. Empty string only if no signal.",
-  "tags": ["one or two from: feature | bug | fix | refactor | doc | design | discipline | infrastructure"]
+  "tags": ["one or two from: feature | bug | fix | refactor | doc | design | discipline | infrastructure"],
+  "transitions": "OPTIONAL ordered array of EXTRA lifecycle hops AFTER the first ship — reconstruct the TRUE path the card took, but ONLY when the digest explicitly shows it. Each entry: {\"to\": \"inprogress\"|\"done\", \"kind\": \"bug\"|\"improve\"|null, \"reason\": \"short text ≤80 chars\"}. kind 'bug' = the shipped card BROKE (regression/revert/reopen in the log) and flew back to In Progress to be fixed; 'improve' = an enhancement after ship. A reopen is normally followed by a {\"to\":\"done\"} hop. OMIT or [] for the normal task→IP→done (most cards). NEVER invent a bug cycle the digest doesn't show."
 }
 
 Column routing rules:
@@ -63,6 +64,11 @@ Column routing rules:
 OPEN / DEFERRED work is the highest-value signal — surface it, don't bury it:
 - If the work was deferred or left unfinished, route to "backlog" (or "task" if never started) AND begin notes with "⏸ OPEN — " followed by exactly what remains and the trigger to resume (e.g. "⏸ OPEN — sim_60d --strict still fails on the archive-on-install gap; resume to decide strict-cap policy.").
 - Closure markers ("shipped" / "merged" / "done" / a commit sha) override deferral — those go to "done".
+
+Lifecycle transitions (reconstruct the TRUE path, not just the final state):
+- Most cards are a plain task→IP→done (or just end in their column). Leave "transitions" empty/omitted.
+- BUT if the digest shows a card was shipped, then BROKE — a regression, revert, reopen, or "X broke / bug in X after we shipped" — and was fixed, add a "bug" transition then a "done". If it was ENHANCED after ship, add an "improve" transition then a "done". This makes the board carry the real 🐞 / ✨ subtasks + history[] the live board would have had.
+- Only reconstruct hops you can SEE in the log. NEVER fabricate a bug bounce to look thorough.
 
 Quality bar:
 - Skip conversational micro-turns ("yes", "ok", "stop", "open the board", "rerun"). They are NOT cards.
@@ -398,6 +404,12 @@ def _emit_extraction_pending(board: Path, card_py: Path,
             "    python3 <card_py> --board <board> fly <num> inprogress --pause-ms 400\n"
             "    python3 <card_py> --board <board> fly <num> done --pause-ms 400 --writeup <notes>\n"
             "  inprogress card → one hop (fly <num> inprogress). backlog/mandatory/notes → leave there.\n"
+            "  RICHER PATH (#294 — only when the digest SHOWS it, never invented): if a done card later\n"
+            "  BROKE (regression/revert/reopen) and was fixed, reconstruct the real bounce —\n"
+            "    python3 <card_py> --board <board> fly <num> inprogress --bug \"<what broke>\"  (adds 🐞 subtask + bug tag)\n"
+            "    python3 <card_py> --board <board> fly <num> done --writeup \"<the fix>\"        (bug tag auto-strips)\n"
+            "  For an ENHANCEMENT after ship use `--improve \"<what's added>\"` instead of `--bug`. Each hop is\n"
+            "  recorded in history[] (#258), so the board mirrors the TRUE lifecycle, not a flat task→IP→done.\n"
             "Process chunks NEWEST-FIRST; dedupe a multi-chunk effort into ONE card. Keep "
             "titles clean (code is a separate badge), cite commit SHAs in notes "
             "when a COMMIT line is in the digest, and only assign a code to a "
@@ -606,16 +618,55 @@ def _card_add(card_py: Path, board: Path, card: dict) -> int | None:
 
 
 def _card_fly(card_py: Path, board: Path, num: int, col: str,
-              writeup: str | None = None) -> bool:
+              writeup: str | None = None, bug: str | None = None,
+              improve: str | None = None, subtask: str | None = None) -> bool:
     args = [sys.executable, str(card_py), "--board", str(board), "fly",
             str(num), col, "--pause-ms", "150"]
     if writeup:
         args += ["--writeup", writeup[:200]]
+    if bug:
+        args += ["--bug", bug[:120]]
+    if improve:
+        args += ["--improve", improve[:120]]
+    if subtask:
+        args += ["--subtask", subtask[:120]]
     try:
         out = subprocess.run(args, capture_output=True, text=True, timeout=8)
     except subprocess.SubprocessError:
         return False
     return out.returncode == 0
+
+
+def _replay_transitions(card_py: Path, board: Path, num: int,
+                         transitions, pace_s: float) -> int:
+    """Replay the richer historical path (#294 SIM-RICH-LIFECYCLE) — extra hops
+    AFTER the initial ship: a `bug` reopen flies done→IP with a 🐞 subtask; an
+    `improve` reopen flies done→IP with an improvement subtask; a `done` hop
+    closes the cycle. The card.py fly --bug/--improve flags do the tag+subtask
+    bookkeeping; history[] (#258) records every hop. Returns hops replayed.
+    Silently ignores malformed entries so a bad LLM field can't break the fill."""
+    if not isinstance(transitions, list):
+        return 0
+    hops = 0
+    for t in transitions:
+        if not isinstance(t, dict):
+            continue
+        to = t.get("to")
+        if to not in ("inprogress", "done"):
+            continue
+        kind = t.get("kind")
+        reason = (t.get("reason") or "").strip()
+        time.sleep(pace_s)
+        if to == "inprogress" and kind == "bug":
+            ok = _card_fly(card_py, board, num, "inprogress", bug=reason or "regression after ship")
+        elif to == "inprogress" and kind == "improve":
+            ok = _card_fly(card_py, board, num, "inprogress", improve=reason or "enhancement after ship")
+        elif to == "inprogress":
+            ok = _card_fly(card_py, board, num, "inprogress")
+        else:  # done — closes the reopened cycle
+            ok = _card_fly(card_py, board, num, "done", writeup=reason or "shipped (replay)")
+        hops += 1 if ok else 0
+    return hops
 
 
 def emit_card(card_py: Path, board: Path, card: dict,
@@ -635,6 +686,8 @@ def emit_card(card_py: Path, board: Path, card: dict,
             time.sleep(pace_s)
             _card_fly(card_py, board, num, "done",
                       writeup=card.get("notes") or "shipped (replay)")
+            # #294: reconstruct the true post-ship path (bug bounces / improves)
+            _replay_transitions(card_py, board, num, card.get("transitions"), pace_s)
         else:  # inprogress
             _card_fly(card_py, board, num, "inprogress")
         return num
