@@ -48,6 +48,19 @@ SIGNAL_RE = re.compile(
     r"|\b\d{2,}\b",                               # counts / result figures / ports
     re.I,
 )
+# Never-miss keywords — a MIRROR of discover2's MANDATORY_RE + DEFER_RE (kept
+# inline so this module stays stdlib-only / dependency-free). A head carrying any
+# of these routes a card to the mandatory / notes / backlog columns, so it must
+# NEVER be dropped — even a short "must ship X" / "defer Y" with no file or sha.
+# (#299 follow-up: the install-time completeness sweep caught such heads slipping
+# through the file/sha gate. If you edit MANDATORY_RE/DEFER_RE in discover2, mirror it here.)
+NEVER_MISS_RE = re.compile(
+    r"\b(must|need to|needs to|gotta|urgent|critical|asap|p0|p1|blocker|"
+    r"required|mandatory|cannot ship without|cant ship without|can't ship without"  # MANDATORY_RE
+    r"|later|next session|tomorrow|todo|deferred|pending|punt|defer)\b",            # DEFER_RE
+    re.I,
+)
+
 # Pure convo-dump artifacts (assistant message opened with a JSON block → the
 # harvested "head" is just the fence/bracket). Never a work signal.
 CODE_ARTIFACT_RE = re.compile(r"^(`{3}\w*|\[\]?|\]|\{\}?|\}|json)$")
@@ -57,8 +70,11 @@ _HEAD_LINE_RE = re.compile(r"\]\s*CLAUDE:\s*(.*)$")
 
 
 def head_signal(head: str) -> bool:
-    """True iff this assistant head carries a work signal (→ must be kept)."""
-    return bool(SIGNAL_RE.search(head))
+    """True iff this assistant head carries a work signal (→ must be kept):
+    either a file/sha/#ref/§-rev/result figure (SIGNAL_RE) OR a never-miss
+    mandatory/defer keyword (NEVER_MISS_RE), so urgency/deferral heads are
+    gate-protected even without a file reference."""
+    return bool(SIGNAL_RE.search(head) or NEVER_MISS_RE.search(head))
 
 
 def head_droppable(head: str) -> bool:
