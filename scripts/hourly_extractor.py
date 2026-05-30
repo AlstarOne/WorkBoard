@@ -34,6 +34,17 @@ from discover2 import (
 _CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
 _LLM_MODEL = os.environ.get("HOURLY_MODEL", "haiku")
 
+# Canonical harvest sources (the `source` field every event carries, set in
+# discover2.harvest_*). The single identifiable list of what the token budget is
+# spent on — pass a subset via --sources to TARGET specific streams:
+#   jsonl   — *.jsonl transcripts (the spine; user prompts + assistant turns)
+#   history — conversation_raw_*.md summaries (#282 gap-fill for sessions not in jsonl)
+#   convo   — conversation_verbatim_*.md dumps (enrichment over jsonl)
+#   git     — git commit log
+#   memory  — ~/.claude .../memory/*.md writes
+#   plans   — plan-file writes
+SOURCES = ("jsonl", "history", "convo", "git", "memory", "plans")
+
 # ---------- LLM digest prompt ---------------------------------------------
 
 _LLM_PROMPT = """\
@@ -92,65 +103,19 @@ def _bucket_label(bucket: int, bucket_min: int = 60) -> str:
     return dt.strftime("%Y-%m-%d %H:%M UTC")
 
 
-# ---------- #299 DIGEST-COMPACT: lossless digest compaction ----------------
-# build_digest is 65% assistant "head" lines, and a large share of those carry
-# ZERO work signal — code-fence artifacts from convo dumps (```json / bare [ ]),
-# short connective tissue ("Sync + re-test:", "Done.", "Smoke test:"), and exact
-# repeats. We drop ONLY those, keeping every survivor BYTE-IDENTICAL.
-#
-# HARD GATE (protects the "never miss a point" star feature): a head is dropped
-# ONLY if it has NO work signal AND is either a code-fence artifact or a short
-# (≤45-char) connector. USER prompts, COMMIT / file-edit / MEMORY / PLAN lines,
-# and any head carrying a sha / card-ref / file / §-rev / decision figure are
-# NEVER dropped — even when they look like chatter. Set DIGEST_COMPACT=0 to
-# disable (used for A/B measurement; on by default).
-_COMPACT = os.environ.get("DIGEST_COMPACT", "1") != "0"
-
-# Work-signal tokens. If a head matches any, it is KEPT no matter its shape.
-_SIGNAL_RE = re.compile(
-    r"`[^`]+`"                                   # `code`/`file` spans
-    r"|/[\w./-]+"                                 # path-like tokens
-    r"|\b[\w-]+\.(py|md|json|js|html|sh|txt|css|yml|yaml|toml|service|plist|cfg)\b"
-    r"|\b[0-9a-f]{7,40}\b"                        # commit shas
-    r"|#\d+"                                      # card refs
-    r"|§|\brev\b|\bHEAD\b"                        # section / rev / HEAD
-    r"|\b\d{2,}\b",                               # counts / result figures / ports
-    re.I,
-)
-# Lines that are pure convo-dump artifacts (an assistant message that opened with
-# a JSON block → the harvested "head" is just the fence/bracket). Never signal.
-_CODE_ARTIFACT_RE = re.compile(r"^(`{3}\w*|\[\]?|\]|\{\}?|\}|json)$")
-
-
-def _head_droppable(head: str) -> bool:
-    """True iff this assistant head is safe-to-drop boilerplate: NO work signal
-    AND (a code-fence artifact OR a short ≤45-char connector). Conservative by
-    design — long lines are kept even when they open with 'Now…'/'Stopped…'
-    because they routinely continue into a real decision."""
-    t = head.strip()
-    if not t:
-        return True
-    if _SIGNAL_RE.search(t):
-        return False
-    if _CODE_ARTIFACT_RE.match(t):
-        return True
-    return len(t) <= 45
-
-
-def _detime(line: str) -> str:
-    """Strip the leading '  [HH:MM:SS] ' so identical heads at different times
-    collapse to one dedup key."""
-    return re.sub(r"^\s*\[\d\d:\d\d:\d\d\]\s*", "", line).strip()
+# #299 DIGEST-COMPACT: the lossless token-cut layer lives in its own module
+# (scripts/digest_compact.py) so all future token work has ONE identifiable home
+# and the logic is exportable on its own. build_digest just assembles the raw
+# lines; digest_compact.compact() drops the zero-signal boilerplate.
+import digest_compact
 
 
 def build_digest(bucket_events: list[dict], project: Path,
                  seen_heads: set | None = None) -> str:
-    """Compact chronological digest of an hour of events for the LLM.
-
-    #299: applies lossless compaction (drop boilerplate heads, collapse
-    consecutive dups, cross-bucket-dedup repeated non-signal heads). Pass a
-    shared `seen_heads` set across buckets in one chunk to dedup across them.
-    """
+    """Chronological digest of an hour of events for the LLM. Assembles raw
+    lines, then hands them to digest_compact.compact() for the lossless cut.
+    Pass a shared `seen_heads` set across buckets/chunks to dedup repeated
+    non-signal heads end-to-end."""
     lines: list[str] = []
     for ev in bucket_events:
         ts = ev["ts"].strftime("%H:%M:%S")
@@ -167,17 +132,6 @@ def build_digest(bucket_events: list[dict], project: Path,
                 fnames = ", ".join(Path(f).name for f in files[:5])
                 lines.append(f"  [{ts}] CLAUDE edited: {fnames}")
             if head:
-                # #299: drop pure-boilerplate heads (lossless — no work signal).
-                if _COMPACT and _head_droppable(head):
-                    continue
-                # #299: cross-bucket dedup of repeated NON-signal heads. Signal
-                # heads are kept even if repeated (a repeat is meaningful there).
-                if _COMPACT and seen_heads is not None \
-                        and not _SIGNAL_RE.search(head):
-                    key = head.strip()
-                    if key in seen_heads:
-                        continue
-                    seen_heads.add(key)
                 lines.append(f"  [{ts}] CLAUDE: {head}")
         elif kind == "git_commit":
             sha = (ev.get("meta") or {}).get("shaShort", "")
@@ -186,19 +140,7 @@ def build_digest(bucket_events: list[dict], project: Path,
             lines.append(f"  [{ts}] MEMORY: {ev['text']}")
         elif kind == "plan_write":
             lines.append(f"  [{ts}] PLAN: {ev['text']}")
-    # #299: collapse consecutive identical CLAUDE-head lines (a repeated chatter
-    # line carries no new info). Protected line types (USER / COMMIT / edited /
-    # MEMORY / PLAN) are left untouched so the hard gate stays provably clean —
-    # even an exact-dup file line is kept rather than risk the never-miss promise.
-    if _COMPACT:
-        deduped: list[str] = []
-        for ln in lines:
-            if (deduped and ln == deduped[-1]
-                    and "] CLAUDE:" in ln):   # only fold head-line dupes
-                continue
-            deduped.append(ln)
-        lines = deduped
-    return "\n".join(lines)
+    return "\n".join(digest_compact.compact(lines, seen_heads))
 
 
 # ---------- LLM dispatch --------------------------------------------------
@@ -782,24 +724,37 @@ def emit_card(card_py: Path, board: Path, card: dict,
 
 # ---------- main driver ---------------------------------------------------
 
-def _flatten_events(project: Path, days: int) -> list[dict]:
+def _flatten_events(project: Path, days: int,
+                    sources: set | None = None) -> list[dict]:
+    """Harvest + merge all event streams. Pass `sources` (a subset of SOURCES)
+    to TARGET specific streams — excluded harvests are skipped entirely, not
+    just filtered after, so targeting also saves the harvest cost."""
+    def want(src: str) -> bool:
+        return sources is None or src in sources
     since = (datetime.now(timezone.utc) - timedelta(days=days)
              if days > 0 else None)
     events: list[dict] = []
-    jsonl_events = harvest_jsonl(since)
-    events.extend(jsonl_events)
-    seen_sessions = {(e.get("meta") or {}).get("sessionId") for e in jsonl_events}
-    events.extend(harvest_history(since, exclude_sessions=seen_sessions))  # #282 gap-fill
+    seen_sessions: set = set()
+    if want("jsonl"):
+        jsonl_events = harvest_jsonl(since)
+        events.extend(jsonl_events)
+        seen_sessions = {(e.get("meta") or {}).get("sessionId") for e in jsonl_events}
+    if want("history"):
+        events.extend(harvest_history(since, exclude_sessions=seen_sessions))  # #282 gap-fill
     # Convo dir is auto-derived from Claude's own data (CLAUDE.md / transcripts),
     # not hardcoded — same resolver discover2.main() uses, so the inline path is
     # as portable as the standalone tool (#284). None → convo is skipped, which
     # is fine: convo dumps are enrichment over the raw *.jsonl we already have.
-    convo_dir = find_convo_dir(project)
-    if convo_dir:
-        events.extend(harvest_convo(since, convo_dir))
-    events.extend(harvest_git(project, since))
-    events.extend(harvest_memory(since))
-    events.extend(harvest_plans(since))
+    if want("convo"):
+        convo_dir = find_convo_dir(project)
+        if convo_dir:
+            events.extend(harvest_convo(since, convo_dir))
+    if want("git"):
+        events.extend(harvest_git(project, since))
+    if want("memory"):
+        events.extend(harvest_memory(since))
+    if want("plans"):
+        events.extend(harvest_plans(since))
     # Dedupe convo turns vs jsonl turns by first-80-chars text.
     seen_user: set[str] = set()
     seen_asst: set[str] = set()
@@ -893,7 +848,8 @@ def run(project: Path, board: Path, port: int, days: int,
         snapshot_load: Path | None = None,
         end_days_ago: int = 0,
         recent_first: bool = False,
-        mode: str = "haiku") -> None:
+        mode: str = "haiku",
+        sources: set | None = None) -> None:
     card_py = Path(__file__).resolve().parent / "card.py"
     if not card_py.exists():
         print(f"card.py not found at {card_py}", file=sys.stderr)
@@ -920,7 +876,7 @@ def run(project: Path, board: Path, port: int, days: int,
             print(f"✓ recon-only run: moved {n_moved} card(s)",
                   file=sys.stderr)
         return
-    events = _flatten_events(project, days)
+    events = _flatten_events(project, days, sources=sources)
     if not events:
         print("no events to extract", file=sys.stderr)
         return
@@ -1145,6 +1101,11 @@ def main():
     ap.add_argument("--recent-first", action="store_true",
                     help="emit newest buckets first so the most relevant cards "
                          "fly in immediately (board still sorts chronologically)")
+    ap.add_argument("--sources", type=str, default=None,
+                    help="comma-separated subset of "
+                         + ",".join(SOURCES) +
+                         " to TARGET (default: all). Excluded harvests are "
+                         "skipped entirely. e.g. --sources jsonl,git")
     ap.add_argument("--mode", choices=["haiku", "inline"], default="haiku",
                     help="haiku = claude -p per chunk (costs usage); "
                          "inline = stage extraction_pending.json for main Claude "
@@ -1159,7 +1120,9 @@ def main():
         snapshot_load=args.snapshot_load,
         end_days_ago=args.end_days_ago,
         recent_first=args.recent_first,
-        mode=args.mode)
+        mode=args.mode,
+        sources=({s.strip() for s in args.sources.split(",") if s.strip()}
+                 if args.sources else None))
 
 
 if __name__ == "__main__":
