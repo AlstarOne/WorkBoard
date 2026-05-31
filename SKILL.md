@@ -102,6 +102,8 @@ The SessionStart hook already injects a digest at session boot — you know the 
 | `board/board.html` | Kanban UI (you don't touch — it `fetch`es board.json from the local server). v2 adds: flash on changed cards + "↻ updated Xs ago" header. v3: served by `serve.py`, not opened as `file://`. |
 | `CONTEXT.md` §18 | Full schema + protocol reference. |
 
+**Before touching `scripts/`, read the architecture tree in `VISION.md` §"Current architecture"** — it maps every module to its concern (branches own a concern; `_*`/support are leaves) and sets the rule: dependency flows downward only, so new work attaches to the branch that owns it or becomes a new leaf — **never rewrite a parent**. Keep that tree current in the same commit as any module add/split/rename.
+
 The browser polls `GET /board.json` every 3s and reloads when `rev` changes. Any save (you via `Write` tool, or the user via the UI which `POST`s to `/board.json`) propagates within seconds and **flashes the changed cards green** so the user *sees* the movement.
 
 **Cross-browser:** v3 works in Safari, Firefox, Chrome, anything — no File System Access API required. The price is one tiny Python process bound to `127.0.0.1:7891`.
