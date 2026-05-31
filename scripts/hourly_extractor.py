@@ -232,47 +232,35 @@ def _load_snapshot(path: Path) -> tuple[dict, list[dict]] | None:
     return snap.get("board", {}), events
 
 
-def run(project: Path, board: Path, port: int, days: int,
-        show_lifecycle: bool, pace_s: float,
-        max_buckets: int, workers: int = 4,
-        bucket_min: int = 60, chunk_size: int = 1,
-        date_filter: str | None = None,
-        reconcile: bool = True,
-        snapshot_load: Path | None = None,
-        end_days_ago: int = 0,
-        recent_first: bool = False,
-        mode: str = "haiku",
-        sources: set | None = None) -> None:
-    card_py = Path(__file__).resolve().parent / "card.py"
-    if not card_py.exists():
-        print(f"card.py not found at {card_py}", file=sys.stderr)
+def _run_snapshot_load(board: Path, card_py: Path,
+                       snapshot_load: Path, reconcile: bool) -> None:
+    """--snapshot-load: skip extraction, just rehydrate board + run recon."""
+    loaded = _load_snapshot(snapshot_load)
+    if loaded is None:
         return
+    board_state, events = loaded
+    try:
+        board.write_text(json.dumps(board_state, indent=2,
+                                     ensure_ascii=False))
+        print(f"  📂 snapshot loaded ← {snapshot_load} "
+              f"({len(board_state.get('cards', []))} cards, "
+              f"{len(events)} events)",
+              file=sys.stderr)
+    except OSError as e:
+        print(f"  ! board rewrite failed: {e}", file=sys.stderr)
+        return
+    if reconcile:
+        n_moved = reconcile_sweep(card_py, board, events)
+        print(f"✓ recon-only run: moved {n_moved} card(s)",
+              file=sys.stderr)
 
-    # --snapshot-load: skip extraction, just rehydrate board + run recon.
-    if snapshot_load:
-        loaded = _load_snapshot(snapshot_load)
-        if loaded is None:
-            return
-        board_state, events = loaded
-        try:
-            board.write_text(json.dumps(board_state, indent=2,
-                                         ensure_ascii=False))
-            print(f"  📂 snapshot loaded ← {snapshot_load} "
-                  f"({len(board_state.get('cards', []))} cards, "
-                  f"{len(events)} events)",
-                  file=sys.stderr)
-        except OSError as e:
-            print(f"  ! board rewrite failed: {e}", file=sys.stderr)
-            return
-        if reconcile:
-            n_moved = reconcile_sweep(card_py, board, events)
-            print(f"✓ recon-only run: moved {n_moved} card(s)",
-                  file=sys.stderr)
-        return
-    events = _flatten_events(project, days, sources=sources)
-    if not events:
-        print("no events to extract", file=sys.stderr)
-        return
+
+def _filter_events(events: list[dict], project: Path,
+                   date_filter: str | None,
+                   end_days_ago: int) -> list[dict] | None:
+    """Apply project-scope, date-pin and tier-boundary filters in order.
+    Returns the filtered events, or None if a filter emptied them (the
+    caller then returns — matching the original early-return behavior)."""
     # Filter to project scope: drop jsonl events whose cwd is unrelated.
     events = [e for e in events if e["kind"] != "user_prompt"
               or _cwd_in_project(e, project)]
@@ -283,11 +271,11 @@ def run(project: Path, board: Path, port: int, days: int,
         except ValueError:
             print(f"  ! invalid --date {date_filter!r} (expected YYYY-MM-DD)",
                   file=sys.stderr)
-            return
+            return None
         events = [e for e in events if e["ts"].date() == target]
         if not events:
             print(f"no events on {date_filter}", file=sys.stderr)
-            return
+            return None
         print(f"  date filter: {date_filter} → {len(events)} events",
               file=sys.stderr)
 
@@ -299,13 +287,17 @@ def run(project: Path, board: Path, port: int, days: int,
         events = [e for e in events if e["ts"] < cutoff]
         if not events:
             print(f"no events older than {end_days_ago}d ago", file=sys.stderr)
-            return
+            return None
         print(f"  end-days-ago {end_days_ago}: → {len(events)} older events",
               file=sys.stderr)
+    return events
 
-    # (card_py already resolved at top of run() for snapshot-load path.)
 
-    # Bucket by hour
+def _bucketize(events: list[dict], bucket_min: int, recent_first: bool,
+               max_buckets: int, chunk_size: int
+               ) -> tuple[list[int], dict[int, list[dict]], list[list[int]]]:
+    """Group events into hour buckets, order them, and batch into chunks.
+    Returns (sorted_bucket_keys, buckets_by_key, chunks_of_keys)."""
     buckets: dict[int, list[dict]] = {}
     for ev in events:
         buckets.setdefault(_bucket_hour(ev["ts"], bucket_min), []).append(ev)
@@ -322,26 +314,16 @@ def run(project: Path, board: Path, port: int, days: int,
     chunks: list[list[int]] = []
     for i in range(0, len(sorted_buckets), chunk_size):
         chunks.append(sorted_buckets[i:i + chunk_size])
+    return sorted_buckets, buckets, chunks
 
-    print(f"▶ hourly extraction: {len(sorted_buckets)} bucket(s) of {len(events)} events "
-          f"→ {len(chunks)} chunk(s) of ≤{chunk_size} bucket(s) "
-          f"(mode={mode}, parallel workers={workers})",
-          file=sys.stderr)
 
-    # INLINE mode (#247, the free default): stage digests for main Claude to
-    # emit — no Haiku call. The session the user is already in does the work.
-    if mode == "inline":
-        n = _emit_extraction_pending(board, card_py, chunks, buckets,
-                                     bucket_min, project)
-        print(f"✓ inline extraction staged: {n} chunk(s) await main Claude",
-              file=sys.stderr)
-        return
-
-    # Progress banner: a single 'notes' card the user can watch update live.
-    banner_num = _banner_create(card_py, board, len(chunks))
-
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    n_cards = 0
+def _extract_chunk_with_retries(chunk_keys: list[int],
+                                buckets: dict[int, list[dict]],
+                                project: Path,
+                                bucket_min: int) -> list[dict]:
+    """Extract one chunk's cards with the two-tier retry ladder on failure:
+    tier 1 splits a multi-bucket chunk in half; tier 2 recursively re-buckets
+    a single failed bucket at half bucket_min."""
 
     def _retry_recursive_subbuckets(
             bucket_events: list[dict], current_min: int,
@@ -371,46 +353,65 @@ def run(project: Path, board: Path, port: int, days: int,
             recovered.extend(cards)
         return recovered
 
-    def _do_chunk(chunk_keys: list[int]) -> tuple[list[int], list[dict]]:
-        chunk = [(_bucket_label(k, bucket_min), buckets[k])
-                 for k in chunk_keys]
-        cards = extract_cards_for_chunk(chunk, project)
-        # Tier 1 retry: chunk-size > 1 → split in half (smaller LLM digests).
-        if not cards and len(chunk_keys) > 1:
-            mid = len(chunk_keys) // 2
-            halves = [chunk_keys[:mid], chunk_keys[mid:]]
-            print(f"  ↻ retry: splitting failed chunk "
-                  f"[{', '.join(_bucket_label(k, bucket_min) for k in chunk_keys)}] "
-                  f"into {len(halves)} halves",
-                  file=sys.stderr)
-            recovered: list[dict] = []
-            for half in halves:
-                sub_chunk = [(_bucket_label(k, bucket_min), buckets[k])
-                             for k in half]
-                sub_cards = extract_cards_for_chunk(sub_chunk, project)
-                if not sub_cards and len(half) == 1:
-                    # Tier 2 retry: single-bucket call STILL failed → recursive
-                    # sub-bucketing at half bucket_min.
-                    sub_cards = _retry_recursive_subbuckets(
-                        buckets[half[0]], bucket_min)
-                recovered.extend(sub_cards)
-            cards = recovered
-        elif not cards and len(chunk_keys) == 1:
-            # Tier 2 retry from the start (chunk-size 1 input that failed).
-            cards = _retry_recursive_subbuckets(
-                buckets[chunk_keys[0]], bucket_min)
-        return chunk_keys, cards
+    chunk = [(_bucket_label(k, bucket_min), buckets[k])
+             for k in chunk_keys]
+    cards = extract_cards_for_chunk(chunk, project)
+    # Tier 1 retry: chunk-size > 1 → split in half (smaller LLM digests).
+    if not cards and len(chunk_keys) > 1:
+        mid = len(chunk_keys) // 2
+        halves = [chunk_keys[:mid], chunk_keys[mid:]]
+        print(f"  ↻ retry: splitting failed chunk "
+              f"[{', '.join(_bucket_label(k, bucket_min) for k in chunk_keys)}] "
+              f"into {len(halves)} halves",
+              file=sys.stderr)
+        recovered: list[dict] = []
+        for half in halves:
+            sub_chunk = [(_bucket_label(k, bucket_min), buckets[k])
+                         for k in half]
+            sub_cards = extract_cards_for_chunk(sub_chunk, project)
+            if not sub_cards and len(half) == 1:
+                # Tier 2 retry: single-bucket call STILL failed → recursive
+                # sub-bucketing at half bucket_min.
+                sub_cards = _retry_recursive_subbuckets(
+                    buckets[half[0]], bucket_min)
+            recovered.extend(sub_cards)
+        cards = recovered
+    elif not cards and len(chunk_keys) == 1:
+        # Tier 2 retry from the start (chunk-size 1 input that failed).
+        cards = _retry_recursive_subbuckets(
+            buckets[chunk_keys[0]], bucket_min)
+    return cards
+
+
+def _extract_haiku(project: Path, board: Path, card_py: Path,
+                   buckets: dict[int, list[dict]], chunks: list[list[int]],
+                   sorted_buckets: list[int], events: list[dict],
+                   bucket_min: int, workers: int, chunk_size: int,
+                   days: int, date_filter: str | None,
+                   show_lifecycle: bool, pace_s: float,
+                   reconcile: bool) -> None:
+    """HAIKU mode: parallel per-chunk extraction → emit cards as chunks finish,
+    snapshot the result, then reconcile. The autonomous (costs-Haiku) path."""
+    # Progress banner: a single 'notes' card the user can watch update live.
+    banner_num = _banner_create(card_py, board, len(chunks))
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    n_cards = 0
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(_do_chunk, c): c for c in chunks}
+        futures = {
+            pool.submit(_extract_chunk_with_retries, c, buckets,
+                        project, bucket_min): c
+            for c in chunks
+        }
         completed = 0
         # Emit cards as chunks finish (no chronological ordering — per user
         # 5/28: 'dont worry about rearranging, we can arrange by time later').
         for fut in as_completed(futures):
+            chunk_keys = futures[fut]
             try:
-                chunk_keys, cards = fut.result()
+                cards = fut.result()
             except Exception as e:
-                chunk_keys = futures[fut]
                 cards = []
                 print(f"  ! chunk error: {e}", file=sys.stderr)
             completed += 1
@@ -458,6 +459,57 @@ def run(project: Path, board: Path, port: int, days: int,
     print(f"✓ emitted {n_cards} card(s) across {len(sorted_buckets)} bucket(s) "
           f"in {len(chunks)} chunk(s); recon moved {n_moved} card(s)",
           file=sys.stderr)
+
+
+def run(project: Path, board: Path, port: int, days: int,
+        show_lifecycle: bool, pace_s: float,
+        max_buckets: int, workers: int = 4,
+        bucket_min: int = 60, chunk_size: int = 1,
+        date_filter: str | None = None,
+        reconcile: bool = True,
+        snapshot_load: Path | None = None,
+        end_days_ago: int = 0,
+        recent_first: bool = False,
+        mode: str = "haiku",
+        sources: set | None = None) -> None:
+    card_py = Path(__file__).resolve().parent / "card.py"
+    if not card_py.exists():
+        print(f"card.py not found at {card_py}", file=sys.stderr)
+        return
+
+    # --snapshot-load: skip extraction, just rehydrate board + run recon.
+    if snapshot_load:
+        _run_snapshot_load(board, card_py, snapshot_load, reconcile)
+        return
+
+    events = _flatten_events(project, days, sources=sources)
+    if not events:
+        print("no events to extract", file=sys.stderr)
+        return
+    events = _filter_events(events, project, date_filter, end_days_ago)
+    if events is None:
+        return
+
+    sorted_buckets, buckets, chunks = _bucketize(
+        events, bucket_min, recent_first, max_buckets, chunk_size)
+
+    print(f"▶ hourly extraction: {len(sorted_buckets)} bucket(s) of {len(events)} events "
+          f"→ {len(chunks)} chunk(s) of ≤{chunk_size} bucket(s) "
+          f"(mode={mode}, parallel workers={workers})",
+          file=sys.stderr)
+
+    # INLINE mode (#247, the free default): stage digests for main Claude to
+    # emit — no Haiku call. The session the user is already in does the work.
+    if mode == "inline":
+        n = _emit_extraction_pending(board, card_py, chunks, buckets,
+                                     bucket_min, project)
+        print(f"✓ inline extraction staged: {n} chunk(s) await main Claude",
+              file=sys.stderr)
+        return
+
+    _extract_haiku(project, board, card_py, buckets, chunks, sorted_buckets,
+                   events, bucket_min, workers, chunk_size, days, date_filter,
+                   show_lifecycle, pace_s, reconcile)
 
 
 def main():
