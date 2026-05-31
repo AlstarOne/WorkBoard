@@ -39,6 +39,13 @@ if "BOARD_REAL_CLAUDE_CONFIG_DIR" in os.environ:
     else:
         _LLM_ENV.pop("CLAUDE_CONFIG_DIR", None)
 
+# Shared `claude -p` argv for every extraction + reconcile call — both sites use
+# this so they never drift. `--strict-mcp-config` skips loading the user's MCP
+# servers (the extraction prompt never calls a tool), shaving ~2s off the boot
+# floor of every call — a measured win that multiplies across all chunks (#326).
+_LLM_ARGS = [_CLAUDE_BIN, "-p", "--output-format", "text",
+             "--model", _LLM_MODEL, "--strict-mcp-config"]
+
 
 # ---------- digest builder ------------------------------------------------
 
@@ -198,4 +205,4 @@ Return ONLY the JSON array. NO markdown, NO commentary, NO ```json fences.
 """
 
 
-__all__ = ["_CLAUDE_BIN", "_LLM_MODEL", "_LLM_ENV", "_LLM_PROMPT", "_bucket_hour", "_bucket_label", "build_digest", "parse_card_array"]
+__all__ = ["_CLAUDE_BIN", "_LLM_MODEL", "_LLM_ENV", "_LLM_ARGS", "_LLM_PROMPT", "_bucket_hour", "_bucket_label", "build_digest", "parse_card_array"]

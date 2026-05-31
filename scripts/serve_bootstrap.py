@@ -454,11 +454,17 @@ def _stream_hourly_cards(project_root: Path, board_dir: Path, port: int,
     # HAIKU (opt-in): two-tier fly fill so the user can start working while it
     # backfills. TIER 1 = last 1d (fast); TIER 2 = older history, in background.
     # Daemon thread; writes serialize through the server lock — no corruption.
-    base += ["--show-lifecycle"]
-    tiers = [("tier-1 (last 1d)", ["--days", "1"])]
+    # --show-lifecycle (task→IP→done flights) only on TIER 1 — the last-1d, the
+    # moment the user is actually watching. The tier-2 backfill emits cards
+    # directly; skipping per-card flights keeps a large backfill from dragging.
+    tiers = [("tier-1 (last 1d)", ["--days", "1", "--show-lifecycle"])]
     if days > 1:
+        # tier-2 is the bulk backfill (not watched) — skip the per-card pace
+        # floor (~0.3s × hundreds of cards dominated wall) so a large window
+        # fills fast behind the watched tier-1.
         tiers.append((f"tier-2 (older, ≤{days}d)",
-                      ["--days", str(days), "--end-days-ago", "1"]))
+                      ["--days", str(days), "--end-days-ago", "1",
+                       "--pace", "0.02"]))
     for label, extra in tiers:
         print(f"hourly bootstrap fill: {label}", file=sys.stderr)
         try:

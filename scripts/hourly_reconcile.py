@@ -89,10 +89,9 @@ def _llm_reconcile(cards: list[dict], events: list[dict],
     )
     try:
         proc = subprocess.run(
-            [_CLAUDE_BIN, "-p", "--output-format", "text",
-             "--model", _LLM_MODEL],
+            _LLM_ARGS,   # shared argv: thinking-off (env) + --strict-mcp-config
             input=full, capture_output=True, text=True, timeout=timeout_s,
-            env=_LLM_ENV,   # MAX_THINKING_TOKENS=0 — the haiku-fill bottleneck fix
+            env=_LLM_ENV,
         )
     except (FileNotFoundError, subprocess.SubprocessError) as e:
         print(f"  ! recon LLM call failed: {e}", file=sys.stderr)

@@ -86,10 +86,9 @@ def extract_cards_for_chunk(chunk: list[tuple[str, list[dict]]],
     label_summary = " + ".join(label for label, _ in chunk)
     try:
         proc = subprocess.run(
-            [_CLAUDE_BIN, "-p", "--output-format", "text",
-             "--model", _LLM_MODEL],
+            _LLM_ARGS,   # shared argv: thinking-off (env) + --strict-mcp-config
             input=full, capture_output=True, text=True, timeout=timeout_s,
-            env=_LLM_ENV,   # MAX_THINKING_TOKENS=0 — the haiku-fill bottleneck fix
+            env=_LLM_ENV,
         )
     except (FileNotFoundError, subprocess.SubprocessError) as e:
         print(f"  ! LLM call failed for chunk [{label_summary}]: {e}",
@@ -477,7 +476,7 @@ def _extract_haiku(project: Path, board: Path, card_py: Path,
 
 def run(project: Path, board: Path, port: int, days: int,
         show_lifecycle: bool, pace_s: float,
-        max_buckets: int, workers: int = 4,
+        max_buckets: int, workers: int = 8,
         bucket_min: int = 60, chunk_size: int = 1,
         date_filter: str | None = None,
         reconcile: bool = True,
@@ -540,8 +539,9 @@ def main():
                     help="play task→ip→done flight per card (slower, more theatre)")
     ap.add_argument("--pace", type=float, default=0.3,
                     help="seconds between card-add operations")
-    ap.add_argument("--workers", type=int, default=4,
-                    help="parallel LLM workers (default 4)")
+    ap.add_argument("--workers", type=int, default=8,
+                    help="parallel LLM workers (default 8 — measured 2x vs 4, "
+                         "0 failures; raise to 12 for huge windows)")
     ap.add_argument("--bucket-min", type=int, default=60,
                     help="bucket size in minutes (default 60)")
     ap.add_argument("--chunk-size", type=int, default=1,
