@@ -652,6 +652,7 @@ _DEFAULT_COLS = [
     {"id": "inprogress", "name": "In Progress",  "kind": "active", "stackUnder": None},
     {"id": "done",       "name": "Done",         "kind": "done",   "stackUnder": None},
     {"id": "notes",      "name": "📝 Notes",     "kind": "intake", "stackUnder": None},
+    {"id": "ideas",      "name": "💡 Ideas",     "kind": "intake", "stackUnder": "notes"},
     {"id": "mandatory",  "name": "📌 MANDATORY", "kind": "todo",   "stackUnder": None},
 ]
 

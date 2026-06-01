@@ -8,7 +8,7 @@
   "columns": [
     {
       "id": "task",
-      "name": "\ud83d\udce5 Task",
+      "name": "📥 Task",
       "kind": "todo",
       "stackUnder": null
     },
@@ -32,13 +32,19 @@
     },
     {
       "id": "notes",
-      "name": "\ud83d\udcdd Notes",
+      "name": "📝 Notes",
       "kind": "intake",
       "stackUnder": null
     },
     {
+      "id": "ideas",
+      "name": "💡 Ideas",
+      "kind": "intake",
+      "stackUnder": "notes"
+    },
+    {
       "id": "mandatory",
-      "name": "\ud83d\udccc MANDATORY",
+      "name": "📌 MANDATORY",
       "kind": "todo",
       "stackUnder": null
     },
