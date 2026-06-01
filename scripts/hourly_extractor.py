@@ -484,6 +484,40 @@ def _extract_haiku(project: Path, board: Path, card_py: Path,
           file=sys.stderr)
 
 
+def _run_window(project: Path, board: Path, card_py: Path, *,
+                days: int, end_days_ago: int, show_lifecycle: bool,
+                pace_s: float, phase: str, seed_if_empty: bool,
+                sources, date_filter, bucket_min: int, recent_first: bool,
+                max_buckets: int, chunk_size: int, workers: int,
+                reconcile: bool, mode: str) -> None:
+    """Extract ONE history window: events → filter → bucketize → emit. The
+    reusable unit behind BOTH the single-pass fill and the #327 two-tier fly,
+    so tiering has one source of truth (no duplicate orchestration in bash)."""
+    events = _flatten_events(project, days, sources=sources)
+    if not events:
+        print(f"no events to extract (phase={phase or '-'})", file=sys.stderr)
+        return
+    events = _filter_events(events, project, date_filter, end_days_ago,
+                            seed_if_empty=seed_if_empty)
+    if events is None:
+        return
+    sorted_buckets, buckets, chunks = _bucketize(
+        events, bucket_min, recent_first, max_buckets, chunk_size)
+    print(f"▶ hourly extraction [{phase or 'single'}]: {len(sorted_buckets)} "
+          f"bucket(s) of {len(events)} events → {len(chunks)} chunk(s) of "
+          f"≤{chunk_size} bucket(s) (mode={mode}, workers={workers})",
+          file=sys.stderr)
+    if mode == "inline":
+        n = _emit_extraction_pending(board, card_py, chunks, buckets,
+                                     bucket_min, project)
+        print(f"✓ inline extraction staged: {n} chunk(s) await main Claude",
+              file=sys.stderr)
+        return
+    _extract_haiku(project, board, card_py, buckets, chunks, sorted_buckets,
+                   events, bucket_min, workers, chunk_size, days, date_filter,
+                   show_lifecycle, pace_s, reconcile, phase=phase)
+
+
 def run(project: Path, board: Path, port: int, days: int,
         show_lifecycle: bool, pace_s: float,
         max_buckets: int, workers: int = 8,
@@ -496,7 +530,8 @@ def run(project: Path, board: Path, port: int, days: int,
         mode: str = "haiku",
         sources: set | None = None,
         seed_if_empty: bool = False,
-        phase: str = "") -> None:
+        phase: str = "",
+        tier_fly: bool = False) -> None:
     card_py = Path(__file__).resolve().parent / "card.py"
     if not card_py.exists():
         print(f"card.py not found at {card_py}", file=sys.stderr)
@@ -507,35 +542,35 @@ def run(project: Path, board: Path, port: int, days: int,
         _run_snapshot_load(board, card_py, snapshot_load, reconcile)
         return
 
-    events = _flatten_events(project, days, sources=sources)
-    if not events:
-        print("no events to extract", file=sys.stderr)
+    common = dict(sources=sources, date_filter=date_filter,
+                  bucket_min=bucket_min, recent_first=recent_first,
+                  max_buckets=max_buckets, chunk_size=chunk_size,
+                  workers=workers, reconcile=reconcile, mode=mode)
+
+    # #327 — TWO-TIER FLY (one source of truth; serve_bootstrap AND install.sh
+    # --harvest both pass --tier-fly). Haiku + multi-day → run the WATCHED
+    # tier-1 (last 1d, lifecycle flights, 'replay') then the faster 'speeding
+    # up' tier-2 backfill (older history, lifecycle, 5× faster pace). days==1 →
+    # one 'solo' pass. Both tiers FORCE --show-lifecycle so they actually FLY
+    # (the harvest path used to add cards flat = a pop, not a fly).
+    if tier_fly and mode == "haiku":
+        if days > 1:
+            _run_window(project, board, card_py, days=1, end_days_ago=0,
+                        show_lifecycle=True, pace_s=pace_s, phase="replay",
+                        seed_if_empty=seed_if_empty, **common)
+            _run_window(project, board, card_py, days=days, end_days_ago=1,
+                        show_lifecycle=True, pace_s=max(pace_s / 5, 0.0),
+                        phase="speedup", seed_if_empty=False, **common)
+        else:
+            _run_window(project, board, card_py, days=1, end_days_ago=0,
+                        show_lifecycle=True, pace_s=pace_s, phase="solo",
+                        seed_if_empty=seed_if_empty, **common)
         return
-    events = _filter_events(events, project, date_filter, end_days_ago,
-                            seed_if_empty=seed_if_empty)
-    if events is None:
-        return
 
-    sorted_buckets, buckets, chunks = _bucketize(
-        events, bucket_min, recent_first, max_buckets, chunk_size)
-
-    print(f"▶ hourly extraction: {len(sorted_buckets)} bucket(s) of {len(events)} events "
-          f"→ {len(chunks)} chunk(s) of ≤{chunk_size} bucket(s) "
-          f"(mode={mode}, parallel workers={workers})",
-          file=sys.stderr)
-
-    # INLINE mode (#247, the free default): stage digests for main Claude to
-    # emit — no Haiku call. The session the user is already in does the work.
-    if mode == "inline":
-        n = _emit_extraction_pending(board, card_py, chunks, buckets,
-                                     bucket_min, project)
-        print(f"✓ inline extraction staged: {n} chunk(s) await main Claude",
-              file=sys.stderr)
-        return
-
-    _extract_haiku(project, board, card_py, buckets, chunks, sorted_buckets,
-                   events, bucket_min, workers, chunk_size, days, date_filter,
-                   show_lifecycle, pace_s, reconcile, phase=phase)
+    # Single pass — inline staging, or an explicit non-tier haiku run.
+    _run_window(project, board, card_py, days=days, end_days_ago=end_days_ago,
+                show_lifecycle=show_lifecycle, pace_s=pace_s, phase=phase,
+                seed_if_empty=seed_if_empty, **common)
 
 
 def main():
@@ -586,6 +621,11 @@ def main():
                     help="#327 HUD fill-stage tag: replay (tier-1 watched) / "
                          "speedup (tier-2 backfill) / solo (single tier) / "
                          "'' (inline default). Sets the live HUD header.")
+    ap.add_argument("--tier-fly", action="store_true",
+                    help="#327 two-tier fly: haiku + days>1 → watched tier-1 "
+                         "(last 1d, lifecycle) then the faster 'speeding up' "
+                         "tier-2 backfill. days==1 → single 'solo' pass. Owns "
+                         "tiering so callers don't duplicate it.")
     ap.add_argument("--seed-cross-project-if-empty", action="store_true",
                     help="#285: if this project has NO local history (fresh "
                          "adopter), seed the first fill from recent cross-project "
@@ -605,7 +645,8 @@ def main():
         sources=({s.strip() for s in args.sources.split(",") if s.strip()}
                  if args.sources else None),
         seed_if_empty=args.seed_cross_project_if_empty,
-        phase=args.phase)
+        phase=args.phase,
+        tier_fly=args.tier_fly)
 
 
 if __name__ == "__main__":

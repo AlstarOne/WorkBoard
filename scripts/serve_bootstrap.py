@@ -452,32 +452,15 @@ def _stream_hourly_cards(project_root: Path, board_dir: Path, port: int,
         return
 
     # HAIKU (opt-in): two-tier fly fill so the user can start working while it
-    # backfills. TIER 1 = last 1d (fast); TIER 2 = older history, in background.
-    # Daemon thread; writes serialize through the server lock — no corruption.
-    # --show-lifecycle (task→IP→done flights) only on TIER 1 — the last-1d, the
-    # moment the user is actually watching. The tier-2 backfill emits cards
-    # directly; skipping per-card flights keeps a large backfill from dragging.
-    # #327 — tier-1 is the WATCHED replay (one-by-one + flights). When a tier-2
-    # backfill follows, tag tier-1 'replay' so the HUD HANDS OFF to "speeding
-    # up" at its end (showing "day-1 replayed in Xs") instead of flashing
-    # "✓ COMPLETE" right before 300 more cards flood in. When tier-1 is the
-    # whole job (days==1) tag it 'solo' so the HUD completes normally.
-    tier1_phase = "replay" if days > 1 else "solo"
-    tiers = [("tier-1 (last 1d)",
-              ["--days", "1", "--show-lifecycle", "--phase", tier1_phase])]
-    if days > 1:
-        # #327 — tier-2 reuses tier-1's SAME one-by-one fly-in (--show-lifecycle),
-        # just 2× faster (--pace 0.15 vs tier-1's 0.3). No more sudden flood/pop:
-        # the older history flies in exactly like the watched tier, only quicker,
-        # under a "speeding up" HUD.
-        tiers.append((f"tier-2 (older, ≤{days}d)",
-                      ["--days", str(days), "--end-days-ago", "1",
-                       "--show-lifecycle", "--pace", "0.15",
-                       "--phase", "speedup"]))
-    for label, extra in tiers:
-        print(f"hourly bootstrap fill: {label}", file=sys.stderr)
-        try:
-            subprocess.run(base + extra, timeout=3600)
-        except Exception as e:
-            print(f"hourly bootstrap fill {label} failed: {e}", file=sys.stderr)
+    # backfills. Daemon thread; writes serialize through the server lock.
+    # #327 — tiering lives in the extractor now (ONE source of truth; the
+    # install.sh --harvest path passes the SAME --tier-fly flag). Haiku +
+    # days>1 → watched tier-1 (last 1d, lifecycle flights) then the faster
+    # "speeding up" tier-2 backfill (older history, lifecycle, ½ pace); the HUD
+    # hands off "replaying last 24h" → "speeding up ▸▸". days==1 → 'solo' pass.
+    print(f"hourly bootstrap fill: tier-fly ({days}d)", file=sys.stderr)
+    try:
+        subprocess.run(base + ["--days", str(days), "--tier-fly"], timeout=3600)
+    except Exception as e:
+        print(f"hourly bootstrap fill failed: {e}", file=sys.stderr)
 

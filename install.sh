@@ -192,9 +192,12 @@ if [ -n "$HARVEST" ] && [ "$SERVER_OK" = "1" ]; then
       say "filling board from ${HARVEST} history via HAIKU (autonomous — no main-Claude step)"
       # claude -p authenticates via BOARD_REAL_CLAUDE_CONFIG_DIR (set in the --demo
       # block) → the user's real login, not the empty isolated demo config dir.
+      # #327 --tier-fly: days>1 → watched tier-1 (last 1d, lifecycle flights)
+      # flies in, THEN the faster "speeding up" tier-2 backfill — instead of one
+      # flat 63-chunk pass that pops cards in without flying.
       "$PY" "${SCRIPTS}/hourly_extractor.py" \
         --project "$HARVEST" --board "${PROJECT}/board/board.json" --port "$PORT" \
-        --days "$HARVEST_DAYS" --bucket-min 30 --chunk-size 2 --recent-first --mode haiku \
+        --days "$HARVEST_DAYS" --bucket-min 30 --chunk-size 2 --recent-first --mode haiku --tier-fly \
         || warn "harvest haiku fill reported an issue (non-fatal)"
       ok "haiku fill complete — board filled autonomously (no main-Claude step needed)"
       ;;
