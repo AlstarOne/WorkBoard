@@ -72,6 +72,26 @@ if [ -z "${server_health}" ] && [ -f "${serve_py}" ]; then
   fi
 fi
 
+# Auto-open the board in the browser the FIRST session each day (#367). The
+# server is kept alive every session, but a tab was only ever opened at install
+# time — close it and nothing re-opened it. Guard via a per-day stamp file so we
+# pop the board once daily, not a new tab on every session/prompt. Only opens if
+# a server is actually live; honours BOARD_NO_AUTO_OPEN=1 for headless/CI/cron.
+if [ -n "${server_health}" ] && [ "${BOARD_NO_AUTO_OPEN:-0}" != "1" ]; then
+  today="$(date +%Y%m%d)"
+  open_stamp="${project_dir}/board/.opened-${today}"
+  if [ ! -f "${open_stamp}" ]; then
+    # Clear any prior day's stamps so the dir doesn't accrete.
+    rm -f "${project_dir}"/board/.opened-* 2>/dev/null
+    : > "${open_stamp}"
+    url="http://127.0.0.1:${server_port}"
+    if command -v open >/dev/null 2>&1; then open "${url}" >/dev/null 2>&1 &
+    elif command -v xdg-open >/dev/null 2>&1; then xdg-open "${url}" >/dev/null 2>&1 &
+    fi
+    disown 2>/dev/null || true
+  fi
+fi
+
 # Build digest: counts by column + last shipped card (with relative time).
 digest="$(python3 - "${board_path}" <<'PY' 2>/dev/null
 import json, sys
