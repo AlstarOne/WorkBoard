@@ -29,18 +29,21 @@ def _banner_update_text(card_py: Path, board: Path, num: int, title: str) -> Non
 # ---------- progress banner ----------
 
 def _emit_progress(card_py: Path, board: Path, done: int, total: int,
-                   label: str = "") -> None:
-    """#318 — drive the live BOARD-LOAD HUD via `card.py progress` (best-effort)."""
+                   label: str = "", phase: str = "") -> None:
+    """#318 — drive the live BOARD-LOAD HUD via `card.py progress` (best-effort).
+    phase (#327) sets the HUD header: replay / speedup / solo / inline('')."""
     try:
         subprocess.run(
             [sys.executable, str(card_py), "--board", str(board), "progress",
-             "--done", str(done), "--total", str(total), "--label", label],
+             "--done", str(done), "--total", str(total), "--label", label,
+             "--phase", phase],
             capture_output=True, text=True, timeout=4)
     except subprocess.SubprocessError:
         pass
 
 
-def _banner_create(card_py: Path, board: Path, total_chunks: int) -> int | None:
+def _banner_create(card_py: Path, board: Path, total_chunks: int,
+                   phase: str = "") -> int | None:
     """Spawn the live progress banner in the 'notes' column."""
     args = [sys.executable, str(card_py), "--board", str(board), "add",
             "--column", "notes", "--priority", "mid",
@@ -55,13 +58,15 @@ def _banner_create(card_py: Path, board: Path, total_chunks: int) -> int | None:
         return None
     if out.returncode != 0:
         return None
-    _emit_progress(card_py, board, 0, total_chunks, "staged — beginning extraction…")
+    _emit_progress(card_py, board, 0, total_chunks,
+                   "staged — beginning extraction…", phase)
     m = re.search(r"#(\d+)", out.stdout)
     return int(m.group(1)) if m else None
 
 
 def _banner_update(card_py: Path, board: Path, num: int,
-                   done: int, total: int, cards_so_far: int) -> None:
+                   done: int, total: int, cards_so_far: int,
+                   phase: str = "", label_override: str | None = None) -> None:
     args = [sys.executable, str(card_py), "--board", str(board), "update",
             str(num),
             "--title", f"🔄 extracting {done}/{total} chunks…",
@@ -70,8 +75,11 @@ def _banner_update(card_py: Path, board: Path, num: int,
         subprocess.run(args, capture_output=True, text=True, timeout=4)
     except subprocess.SubprocessError:
         pass
+    # #327 — label_override lets the tier-1→tier-2 handoff replace the generic
+    # "chunk N/M" line with e.g. "day-1 replayed in 8s · speeding up ▸▸".
     _emit_progress(card_py, board, done, total,
-                   f"chunk {done}/{total} · {cards_so_far} cards emitted")
+                   label_override or f"chunk {done}/{total} · {cards_so_far} cards emitted",
+                   phase)
 
 
 def _banner_finish(card_py: Path, board: Path, num: int,

@@ -571,6 +571,7 @@ class BoardHandler(BaseHTTPRequestHandler):
                     "done": int(p.get("done", 0)),
                     "total": int(p.get("total", 0)),
                     "label": str(p.get("label", ""))[:200],
+                    "phase": str(p.get("phase", ""))[:40],
                 })
             except (ValueError, TypeError) as e:
                 self._send(400, json.dumps({"error": f"bad progress: {e}"}).encode())

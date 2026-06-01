@@ -4923,7 +4923,7 @@ function renderColumn(col, cards) {
     h = document.createElement('div'); h.id = 'load-hud';
     h.innerHTML =
       '<div id="load-hud-head"><span class="lh-dot"></span>'+
-      '<span>HISTORY REPLAY ░ inline extraction</span></div>'+
+      '<span>HISTORY REPLAY ░ <span id="lh-mode">inline extraction</span></span></div>'+
       '<div id="load-hud-body">'+
         '<div class="lh-status"><b>▶ EXTRACTING<span class="lh-cur">▋</span></b>'+
           '<span class="lh-count"><span id="lh-done">0</span>/<span id="lh-total">0</span></span></div>'+
@@ -4948,17 +4948,44 @@ function renderColumn(col, cards) {
     return h;
   }
   let _hideTimer = null;
+  // #327 — the HUD header text per fill phase. '' / 'inline' keep the original
+  // wording (the main-Claude inline path); the haiku tiers pass an explicit
+  // phase so the header no longer wrongly says "inline" during a haiku fill.
+  function _lhHeader(phase){
+    switch (phase) {
+      case 'replay':  return 'replaying last 24h';
+      case 'speedup': return 'speeding up ▸▸ backfill';
+      case 'solo':    return 'replaying history';
+      default:        return 'inline extraction';
+    }
+  }
   const HUD = {
     show(){ const h = el(); h.style.display = ''; if (_hideTimer) { clearTimeout(_hideTimer); _hideTimer = null; } return HUD; },
     hide(){ const h = el(); h.style.display = 'none'; return HUD; },
-    update(done, total, label){
+    update(done, total, label, phase){
       const h = el(); h.classList.remove('lh-done'); h.style.display = '';
       const pct = total ? Math.round(done/total*100) : 0;
       h.querySelector('#lh-done').textContent = String(done).padStart(String(total||0).length, '0');
       h.querySelector('#lh-total').textContent = total;
       h.querySelector('#lh-fill').style.transform = 'scaleX('+(pct/100)+')';
       h.querySelector('#lh-pct').textContent = pct+'%';
+      const mode = h.querySelector('#lh-mode'); if (mode) mode.textContent = _lhHeader(phase);
+      const sb = h.querySelector('.lh-status b');
+      if (sb) sb.innerHTML = (phase === 'speedup' ? '▶ SPEEDING UP' : '▶ EXTRACTING') + '<span class="lh-cur">▋</span>';
       if (label) { h.querySelector('#lh-window').textContent = label; h.querySelector('#lh-tail').textContent = '✓ '+label; }
+      return HUD;
+    },
+    // #327 — tier-1 ('replay') ended but tier-2 is still coming. Don't flash
+    // "✓ COMPLETE" + auto-hide (that pre-flood flash is the "feels buggy"); show
+    // the "day-1 replayed in Xs · speeding up" handoff and stay visible.
+    handoff(label){
+      const h = el(); h.classList.remove('lh-done'); h.style.display = '';
+      h.querySelector('#lh-fill').style.transform = 'scaleX(1)';
+      h.querySelector('#lh-pct').textContent = '100%';
+      const mode = h.querySelector('#lh-mode'); if (mode) mode.textContent = _lhHeader('speedup');
+      const sb = h.querySelector('.lh-status b'); if (sb) sb.innerHTML = '▶ SPEEDING UP<span class="lh-cur">▋</span>';
+      h.querySelector('#lh-window').textContent = label || 'speeding up ▸▸';
+      if (_hideTimer) { clearTimeout(_hideTimer); _hideTimer = null; }
       return HUD;
     },
     done(label){
@@ -5447,8 +5474,12 @@ function startSSE() {
     try {
       const d = JSON.parse(e.data);
       if (!window.BoardLoadHUD) return;
-      if (d.total > 0 && d.done >= d.total) BoardLoadHUD.done(d.label);
-      else BoardLoadHUD.update(d.done || 0, d.total || 0, d.label || '');
+      if (d.total > 0 && d.done >= d.total) {
+        // #327 — 'replay' (tier-1) finishing isn't the end: hand off to the
+        // "speeding up" tier-2 instead of completing the HUD.
+        if (d.phase === 'replay') BoardLoadHUD.handoff(d.label);
+        else BoardLoadHUD.done(d.label);
+      } else BoardLoadHUD.update(d.done || 0, d.total || 0, d.label || '', d.phase || '');
     } catch (_) {}
   });
   _es.onerror = () => {

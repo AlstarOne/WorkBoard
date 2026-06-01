@@ -402,11 +402,13 @@ def _extract_haiku(project: Path, board: Path, card_py: Path,
                    bucket_min: int, workers: int, chunk_size: int,
                    days: int, date_filter: str | None,
                    show_lifecycle: bool, pace_s: float,
-                   reconcile: bool) -> None:
+                   reconcile: bool, phase: str = "") -> None:
     """HAIKU mode: parallel per-chunk extraction → emit cards as chunks finish,
-    snapshot the result, then reconcile. The autonomous (costs-Haiku) path."""
+    snapshot the result, then reconcile. The autonomous (costs-Haiku) path.
+    phase (#327) tags the HUD: 'replay' (tier-1) / 'speedup' (tier-2) / 'solo'."""
+    t0 = time.monotonic()
     # Progress banner: a single 'notes' card the user can watch update live.
-    banner_num = _banner_create(card_py, board, len(chunks))
+    banner_num = _banner_create(card_py, board, len(chunks), phase)
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
     n_cards = 0
@@ -444,10 +446,18 @@ def _extract_haiku(project: Path, board: Path, card_py: Path,
                 if num:
                     n_cards += 1
                 time.sleep(pace_s)
-            # Update the banner after each chunk completes.
+            # Update the banner after each chunk completes. #327 — on the LAST
+            # chunk of a 'replay' tier (tier-2 still to come), swap the generic
+            # progress line for a "day-1 replayed in Xs · speeding up ▸▸" handoff
+            # so the HUD signals acceleration instead of flashing "✓ COMPLETE".
             if banner_num:
+                handoff = None
+                if phase == "replay" and completed == len(chunks):
+                    handoff = (f"day-1 replayed in {time.monotonic() - t0:.0f}s "
+                               f"· speeding up ▸▸ backfilling older history")
                 _banner_update(card_py, board, banner_num,
-                               completed, len(chunks), n_cards)
+                               completed, len(chunks), n_cards,
+                               phase=phase, label_override=handoff)
 
     # Save snapshot of post-extraction state BEFORE reconciliation, so
     # offline recon testing can iterate against a stable baseline.
@@ -485,7 +495,8 @@ def run(project: Path, board: Path, port: int, days: int,
         recent_first: bool = False,
         mode: str = "haiku",
         sources: set | None = None,
-        seed_if_empty: bool = False) -> None:
+        seed_if_empty: bool = False,
+        phase: str = "") -> None:
     card_py = Path(__file__).resolve().parent / "card.py"
     if not card_py.exists():
         print(f"card.py not found at {card_py}", file=sys.stderr)
@@ -524,7 +535,7 @@ def run(project: Path, board: Path, port: int, days: int,
 
     _extract_haiku(project, board, card_py, buckets, chunks, sorted_buckets,
                    events, bucket_min, workers, chunk_size, days, date_filter,
-                   show_lifecycle, pace_s, reconcile)
+                   show_lifecycle, pace_s, reconcile, phase=phase)
 
 
 def main():
@@ -571,6 +582,10 @@ def main():
                     help="haiku = claude -p per chunk (costs usage); "
                          "inline = stage extraction_pending.json for main Claude "
                          "to emit (free, no Haiku, higher quality)")
+    ap.add_argument("--phase", type=str, default="",
+                    help="#327 HUD fill-stage tag: replay (tier-1 watched) / "
+                         "speedup (tier-2 backfill) / solo (single tier) / "
+                         "'' (inline default). Sets the live HUD header.")
     ap.add_argument("--seed-cross-project-if-empty", action="store_true",
                     help="#285: if this project has NO local history (fresh "
                          "adopter), seed the first fill from recent cross-project "
@@ -589,7 +604,8 @@ def main():
         mode=args.mode,
         sources=({s.strip() for s in args.sources.split(",") if s.strip()}
                  if args.sources else None),
-        seed_if_empty=args.seed_cross_project_if_empty)
+        seed_if_empty=args.seed_cross_project_if_empty,
+        phase=args.phase)
 
 
 if __name__ == "__main__":

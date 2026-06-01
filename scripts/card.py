@@ -216,6 +216,8 @@ def build_parser():
     ppr.add_argument("--done", type=int, required=True, help="chunks completed so far")
     ppr.add_argument("--total", type=int, required=True, help="total chunks staged")
     ppr.add_argument("--label", default=None, help="current chunk label (e.g. its time window)")
+    ppr.add_argument("--phase", default="", help="fill stage for the HUD header "
+                     "(inline / replay / speedup / solo); '' = inline default")
     ppr.set_defaults(fn=cmd_progress)
 
     # recover (3.5c) — list rolling backups or restore one
