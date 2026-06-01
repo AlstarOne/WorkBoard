@@ -2785,10 +2785,18 @@ document.addEventListener('visibilitychange', () => {
   // current board (a single render, not a backlog of incremental inserts), then
   // reopen the live stream for ongoing updates.
   _animSuppressUntil = Date.now() + 1200;
+  // Paint immediately from whatever state we already hold so the board (incl. a
+  // live progress banner / HUD) is visible the instant you return — don't wait
+  // on the network round-trip.
+  render();
   fetch(BOARD_URL, { cache: 'no-store' })
     .then(r => (r.ok ? r.json() : null))
     .then(incoming => {
-      if (incoming && (incoming.rev || 0) !== lastRev) {
+      // #353 — render UNCONDITIONALLY, not rev-gated. A throttled background
+      // poll can advance lastRev while hidden, so `rev === lastRev` on return
+      // even though the DOM was never repainted — the banner/HUD would then stay
+      // hidden until the next live X/Y change. Always absorb + repaint instead.
+      if (incoming) {
         _absorbState(incoming);
         render();            // playEntrance() self-suppresses via _animSuppressed()
         tickLastUpdate();
