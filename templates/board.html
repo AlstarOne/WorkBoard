@@ -1575,7 +1575,7 @@
 
 <div class="toast" id="toast"></div>
 <div class="undo-toast" id="undo-toast"></div>
-<div id="col-trash" title="Drop column here to delete">🗑</div>
+<div id="col-trash" title="Drop a card here to discard · drop a column to delete it">🗑</div>
 <div id="mini-confirm-overlay">
   <div class="mini-confirm-card">
     <div class="mc-msg">Confirm?</div>
@@ -3404,11 +3404,8 @@ function renderModal(card) {
 
   const del = document.createElement('button');
   del.className = 'modal-delete';
-  del.textContent = 'Delete card';
-  del.onclick = async () => {
-    if (!(await miniConfirm('Confirm?', { sub: `Delete card "${card.title}"` }))) return;
-    deleteCard(card.id);
-  };
+  del.textContent = isDiscarded(card) ? 'Delete permanently' : 'Discard';
+  del.onclick = () => { discardCard(card.id); };   // #358 — soft-delete → Discarded col
   foot.appendChild(del);
   modal.appendChild(foot);
 
@@ -5466,11 +5463,8 @@ function openCardMenu(card, x, y) {
   }
   const del = document.createElement('button');
   del.className = 'card-menu-item card-menu-del';
-  del.textContent = 'Delete';
-  del.onclick = async () => {
-    closeCardMenu();
-    if (await miniConfirm('Delete card?', { sub: `"${card.title}"` })) deleteCard(card.id);
-  };
+  del.textContent = isDiscarded(card) ? 'Delete permanently' : 'Discard';  // #358
+  del.onclick = () => { closeCardMenu(); discardCard(card.id); };
   menu.appendChild(del);
   document.body.appendChild(menu);
   // Position, clamped to the viewport (kebab sits at the far-right edge, so
@@ -5504,6 +5498,49 @@ function deleteCard(id) {
   }
   if (_openCardId === id) closeModal();
   scheduleSave();
+}
+
+// #358 — Resolve (lazily create) the Discarded column. Matched by id
+// 'discarded' OR a case-insensitive "Discarded" name so it works on any board
+// (live boards may carry a generated id); created if absent so soft-delete
+// always has a home.
+function discardColumn() {
+  if (!state) return null;
+  let col = (state.columns || []).find(
+    c => c.id === 'discarded' || /^discarded$/i.test(c.name || ''));
+  if (!col) {
+    col = { id: 'discarded', name: 'Discarded', kind: 'custom', stackUnder: null };
+    state.columns.push(col);
+    if (typeof handleColumnAdded === 'function') { /* state already mutated */ }
+  }
+  return col;
+}
+
+// #358 — Soft-delete. "Delete" no longer destroys a card: it flies it to the
+// Discarded column (reversible, history-recorded, undoable) via the normal move
+// path. A card ALREADY in Discarded is purged for real (confirmed, since that
+// IS irreversible) — so the column can still be emptied.
+async function discardCard(id) {
+  if (!state) return;
+  const card = state.cards.find(c => c.id === id);
+  if (!card) return;
+  const disc = discardColumn();
+  if (!disc) return;
+  if (card.column === disc.id) {
+    if (await miniConfirm('Delete permanently?',
+        { sub: `"${card.title}" — this can't be undone` })) deleteCard(id);
+    return;
+  }
+  if (_openCardId === id) closeModal();
+  moveCardToColumn(card, disc.id);
+}
+
+// True when a card is sitting in the Discarded column (so UI can label its
+// remove action "Delete permanently" instead of "Discard").
+function isDiscarded(card) {
+  const d = (state && state.columns || []).find(
+    c => c.id === 'discarded' || /^discarded$/i.test(c.name || ''));
+  return !!d && card && card.column === d.id;
 }
 
 function handleColumnAdded({ column, index }) {
@@ -5732,8 +5769,7 @@ async function init() {
       if (_cardDrag) cancelCardDrag();
       const card = state.cards.find(c => c.id === cardId);
       if (!card) return;
-      if (!(await miniConfirm('Delete card?', { sub: `"${card.title}"` }))) return;
-      deleteCard(cardId);
+      discardCard(cardId);   // #358 — drop-to-trash now soft-deletes → Discarded col
       return;
     }
 
