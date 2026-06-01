@@ -62,7 +62,7 @@ only for genuine non-tasks (a pure question, debug-this-snippet, explain-X) per 
 ## When to engage (decision table)
 
 The SessionStart hook injects a digest at boot, and the UserPromptSubmit hook re-injects this
-protocol every turn (install via `docs/BOOTSTRAP.md` → `--hook live`). This table says when to ACT.
+protocol every turn (install via `docs/BOOTSTRAP.md` → `--hook all`). This table says when to ACT.
 
 | User said / situation | Action |
 |---|---|
@@ -108,7 +108,7 @@ git log --oneline --since="$(date -v-2H +%FT%T)"     # commits in the last 2h �
 ```
 
 The **Stop hook** is the backstop here: if a turn did substantive work but ran zero `card.py`
-calls, it blocks the turn-end and tells you to card it (install via `--hook live`). Don't rely
+calls, it blocks the turn-end and tells you to card it (install via `--hook all`). Don't rely
 on it — card as you go — but it's the safety net.
 
 ---

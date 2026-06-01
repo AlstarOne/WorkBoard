@@ -175,11 +175,12 @@ def main() -> int:
     ap.add_argument("--hook", choices=("session-start", "user-prompt-submit",
                                        "pre-tool-use", "stop", "both", "all", "live"),
                     default="session-start",
-                    help="which hook(s) to install. 'live' (RECOMMENDED going-forward) = "
-                         "session-start + user-prompt-submit (per-turn lifecycle nudge, #360) "
-                         "+ stop (blocking sign-off backstop, #279) — the always-on LIVE "
-                         "enforcement set. 'both' = session-start + user-prompt-submit (legacy). "
-                         "'all' = session-start + pre-tool-use (#102 auto-link) + stop.")
+                    help="which hook(s) to install. 'all' and 'live' are the SAME "
+                         "complete set (RECOMMENDED) = session-start (digest + daily "
+                         "auto-open) + user-prompt-submit (per-turn LIVE nudge #360) + "
+                         "pre-tool-use (flash + #102 auto-link) + stop (blocking sign-off "
+                         "backstop #279/#359). 'both' = session-start + user-prompt-submit "
+                         "only (legacy 2-hook alias). Or pass a single hook name.")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--uninstall", action="store_true", help="remove ALL board-steward hooks")
     ap.add_argument("--status", action="store_true")
@@ -197,18 +198,14 @@ def main() -> int:
     elif args.hook == "both":
         # legacy alias preserved: SessionStart + UserPromptSubmit
         selected = {"session-start", "user-prompt-submit"}
-    elif args.hook == "all":
-        # genuinely ALL four hooks — the complete fresh-install experience:
-        # SessionStart (digest in + daily auto-open) + UserPromptSubmit (#360
-        # per-turn LIVE nudge) + PreToolUse (flash on edit + #102 auto-link) +
-        # Stop (#359 blocking sign-off backstop). install.sh wires this so a
-        # download reflects everything we built, not a subset.
+    elif args.hook in ("all", "live"):
+        # 'all' and 'live' are ONE canonical complete set — no all-vs-live
+        # ambiguity (#369). Genuinely ALL four hooks, the full experience a
+        # fresh install (and we) run: SessionStart (digest + daily auto-open) +
+        # UserPromptSubmit (#360 per-turn LIVE nudge) + PreToolUse (flash on edit
+        # + #102 auto-link) + Stop (#359 blocking sign-off backstop). install.sh
+        # wires this so a download reflects everything, not a subset.
         selected = {"session-start", "user-prompt-submit", "pre-tool-use", "stop"}
-    elif args.hook == "live":
-        # LIVE going-forward enforcement (#359/#360): digest in (SessionStart) +
-        # per-turn lifecycle nudge (UserPromptSubmit) + blocking sign-off backstop
-        # (Stop) so a turn can't end with un-carded work. The always-on set.
-        selected = {"session-start", "user-prompt-submit", "stop"}
     else:
         selected = {args.hook}
 

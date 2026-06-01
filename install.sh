@@ -20,7 +20,8 @@
 #   1. Install the skill   → $CLAUDE_CONFIG_DIR/skills/board-steward (symlink to this repo)
 #   2. Bootstrap a board   → serve.py --bootstrap (server + browser + the hourly
 #                            two-tier FLY fill: last-1d fast → older backfills live)
-#   3. Wire Claude hooks   → install_hooks.py --hook all (SessionStart digest + PreToolUse flash)
+#   3. Wire Claude hooks   → install_hooks.py --hook all (all four: SessionStart digest+auto-open,
+#                            UserPromptSubmit nudge, PreToolUse flash, Stop sign-off backstop)
 #   4. Autostart at login  → install_autostart.py (launchd/systemd/Task Scheduler)
 #   5. Open the browser    → http://127.0.0.1:<port>
 #

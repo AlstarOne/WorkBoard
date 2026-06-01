@@ -15,7 +15,7 @@ silently drifts mid-session and the user has to ask "did you update the board?" 
 failure mode this skill exists to kill — card #84/#359).
 
 ```bash
-python3 scripts/install_hooks.py --hook live    # RECOMMENDED — the always-on LIVE set
+python3 scripts/install_hooks.py --hook all     # RECOMMENDED — the complete set ('all' and 'live' are identical)
 python3 scripts/install_hooks.py --status        # verify
 python3 scripts/install_hooks.py --uninstall     # reverse (removes ALL board-steward hooks)
 
@@ -24,24 +24,27 @@ python3 scripts/health_check.py                  # green/red dashboard; exit 0 =
 python3 scripts/health_check.py --json
 ```
 
-`--hook live` wires **three** hooks into `~/.claude/settings.json` (path honors `$CLAUDE_CONFIG_DIR`):
+`--hook all` (identical to `--hook live` — same canonical set, no ambiguity, #369) wires
+**all four** hooks into `~/.claude/settings.json` (path honors `$CLAUDE_CONFIG_DIR`):
 
 | Hook | Event | What it does |
 |---|---|---|
-| `hook_session_start.sh` | `SessionStart` | Injects the ~150-token board digest into context at session boot. |
+| `hook_session_start.sh` | `SessionStart` | Injects the ~150-token board digest into context at session boot, and auto-opens the board in the browser on the first session each day (#367). |
 | `hook_user_prompt.sh` | `UserPromptSubmit` | On every user message, injects the per-turn LIVE lifecycle protocol (#360). Cwd-walks for `board/board.json` — silent in non-board projects. |
+| `hook_pre_tool_use.sh` | `PreToolUse` | On a file edit, flashes the matching card border coral and auto-links file→card (#102, §I below). |
 | `hook_stop.sh` → `_hook_stop_recon.py` | `Stop` | **Blocking backstop (#279).** When a turn did substantive work (ship-signal OR ≥3 edits) but ran zero `card.py` calls, it emits `{"decision":"block","reason":...}` to refuse the stop so Claude cards it NOW. Single-shot via the `stop_hook_active` loop guard (blocks at most once, then proceeds). Also writes `board/recon_pending.json` as a deferred fallback. Silent for read-only turns / non-board projects / already-carded work. |
 
-Other selectors: `--hook all` = session-start + pre-tool-use (#102 file-flash auto-link) + stop;
-`--hook both` = session-start + user-prompt-submit (legacy); single names install just that one.
+Other selectors: `--hook both` = session-start + user-prompt-submit only (legacy 2-hook alias);
+a single hook name (`session-start` / `user-prompt-submit` / `pre-tool-use` / `stop`) installs just that one.
 
 The installer is **safe**: auto-backs up `settings.json` to `.bak-<ts>` before any write,
 refuses malformed JSON, resolves the hook command path via `__file__` (no hardcoded
 `/Users/*` — works anywhere), is a no-op when state already matches, and preserves all
 other settings. Restart any open Claude Code session to pick up the change.
 
-> The `pre-tool-use` hook (file→card flash, §I below) is **not** part of `--hook live` —
-> the LIVE guarantee comes from the Stop backstop, not a per-edit gate.
+> The `pre-tool-use` hook (file→card flash, §I below) **is** part of the canonical
+> `--hook all`/`--hook live` set. The LIVE guarantee itself comes from the Stop backstop,
+> not the per-edit flash — the flash is a UX nicety on top.
 
 ---
 
@@ -111,7 +114,7 @@ Live at `~/.agents/skills/board-steward/scripts/`:
 | `discover.py` | Mine `~/.claude/projects/*/*.jsonl` for card material (first/last prompts, files edited, ship/defer hints). Bootstraps the board from real history. | `python3 discover.py [--project DIR] [--days 14] [--memory]` |
 | `regen_index.py` | Rebuild `index.json` from `board.json` | `python3 regen_index.py <path>/board.json` |
 | `archive_done.py` | Sweep Done >14d → `archive/board-YYYY-MM.json` | `python3 archive_done.py <path>/board.json [--days 14] [--dry-run]` |
-| `install_hooks.py` | Wire LIVE hooks into settings.json | `python3 install_hooks.py --hook live` |
+| `install_hooks.py` | Wire LIVE hooks into settings.json | `python3 install_hooks.py --hook all` |
 | `install_autostart.py` | Cross-platform autostart dispatcher (#103) | `python3 install_autostart.py [--project DIR] [--port 7891] [--status] [--uninstall] [--dry-run]` |
 
 All stdlib-only, project-agnostic, idempotent.
@@ -229,11 +232,11 @@ Discipline: scan after every commit cluster; always dry-run first; add `--writeu
 git can't see; **score < 2 = STOP** (no confident match — don't `--force`); plain `fly done` is
 still right for non-commit work (config tweak, deferral decision).
 
-## §I — Auto-link files to cards (#102, needs `--hook all`)
+## §I — Auto-link files to cards (#102, in the canonical `--hook all` set)
 
 When Claude edits a file a card "owns" (`card.linkedFiles`), the `pre-tool-use` hook pings
-`/flash` and the card border pulses coral. **Requires `install_hooks.py --hook all`** (not part
-of `--hook live`).
+`/flash` and the card border pulses coral. Wired by the canonical `install_hooks.py --hook all`
+(identical to `--hook live`).
 
 ```bash
 python3 card.py update 83 --add-linked-file <abs-path> --add-linked-file <abs-path>
