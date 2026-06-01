@@ -59,6 +59,12 @@ _clients_lock = threading.Lock()
 _clients: list[queue.Queue] = []
 _cached_state: dict | None = None
 _cached_lock = threading.Lock()
+# #353/#318 — last extract_progress payload, so a freshly-connected client (hard
+# refresh, or an EventSource that dropped while the tab was backgrounded and
+# reconnected) gets the CURRENT X/Y-chunks HUD immediately instead of staying
+# blank until the next chunk fires an event. SSE has no replay buffer otherwise.
+# Cleared when extraction completes (done>=total) so a stale HUD doesn't reappear.
+_last_progress: dict | None = None
 
 
 # ===== state I/O =====
@@ -364,6 +370,14 @@ class BoardHandler(BaseHTTPRequestHandler):
         q: queue.Queue = queue.Queue(maxsize=256)
         with _clients_lock:
             _clients.append(q)
+        # #353/#318 — replay the last progress to THIS new client so a hard
+        # refresh / backgrounded-tab reconnect paints the current X/Y-chunks HUD
+        # immediately, rather than staying blank until the next chunk's event.
+        if _last_progress is not None:
+            try:
+                q.put_nowait(("extract_progress", _last_progress))
+            except queue.Full:
+                pass
         try:
             while True:
                 try:
@@ -567,12 +581,19 @@ class BoardHandler(BaseHTTPRequestHandler):
                 return
             try:
                 p = json.loads(self.rfile.read(length))
-                broadcast("extract_progress", {
+                evt = {
                     "done": int(p.get("done", 0)),
                     "total": int(p.get("total", 0)),
                     "label": str(p.get("label", ""))[:200],
                     "phase": str(p.get("phase", ""))[:40],
-                })
+                }
+                # Cache so a new/reconnecting client gets the current HUD on
+                # connect; drop the cache once extraction is complete so a later
+                # refresh doesn't resurrect a finished HUD.
+                global _last_progress
+                _last_progress = None if (evt["total"] and
+                                          evt["done"] >= evt["total"]) else evt
+                broadcast("extract_progress", evt)
             except (ValueError, TypeError) as e:
                 self._send(400, json.dumps({"error": f"bad progress: {e}"}).encode())
                 return
