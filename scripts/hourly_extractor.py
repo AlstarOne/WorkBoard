@@ -446,18 +446,18 @@ def _extract_haiku(project: Path, board: Path, card_py: Path,
                 if num:
                     n_cards += 1
                 time.sleep(pace_s)
-            # Update the banner after each chunk completes. #327 — on the LAST
-            # chunk of a 'replay' tier (tier-2 still to come), swap the generic
-            # progress line for a "day-1 replayed in Xs · speeding up ▸▸" handoff
-            # so the HUD signals acceleration instead of flashing "✓ COMPLETE".
-            if banner_num:
-                handoff = None
-                if phase == "replay" and completed == len(chunks):
-                    handoff = (f"day-1 replayed in {time.monotonic() - t0:.0f}s "
-                               f"· speeding up ▸▸ backfilling older history")
-                _banner_update(card_py, board, banner_num,
-                               completed, len(chunks), n_cards,
-                               phase=phase, label_override=handoff)
+            # Drive the HUD after each chunk completes (the notes-column banner
+            # card is gone; banner_num is None). #327 — on the LAST chunk of a
+            # 'replay' tier (tier-2 still to come), swap the generic progress
+            # line for a "day-1 replayed in Xs · speeding up ▸▸" handoff so the
+            # HUD signals acceleration instead of flashing "✓ COMPLETE".
+            handoff = None
+            if phase == "replay" and completed == len(chunks):
+                handoff = (f"day-1 replayed in {time.monotonic() - t0:.0f}s "
+                           f"· speeding up ▸▸ backfilling older history")
+            _banner_update(card_py, board, banner_num,
+                           completed, len(chunks), n_cards,
+                           phase=phase, label_override=handoff)
 
     # Save snapshot of post-extraction state BEFORE reconciliation, so
     # offline recon testing can iterate against a stable baseline.

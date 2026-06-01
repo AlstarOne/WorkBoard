@@ -44,39 +44,23 @@ def _emit_progress(card_py: Path, board: Path, done: int, total: int,
 
 def _banner_create(card_py: Path, board: Path, total_chunks: int,
                    phase: str = "") -> int | None:
-    """Spawn the live progress banner in the 'notes' column."""
-    args = [sys.executable, str(card_py), "--board", str(board), "add",
-            "--column", "notes", "--priority", "mid",
-            "--code", "EXTRACTION",
-            "--title", f"🔄 extracting 0/{total_chunks} chunks…",
-            "--origin", "Live progress banner from hourly_extractor.py",
-            "--notes", f"chunks done: 0/{total_chunks}  cards emitted: 0",
-            "--tag", "discovered", "--tag", "banner"]
-    try:
-        out = subprocess.run(args, capture_output=True, text=True, timeout=8)
-    except subprocess.SubprocessError:
-        return None
-    if out.returncode != 0:
-        return None
+    """Kick off extraction progress on the live BOARD-LOAD HUD.
+
+    The HUD (#318) is the single source of truth for "X/Y chunks". The old
+    'notes'-column banner card was redundant with it (user, 2026-06-01), so it's
+    gone — we only drive the HUD here and return None (no banner card to update).
+    """
     _emit_progress(card_py, board, 0, total_chunks,
                    "staged — beginning extraction…", phase)
-    m = re.search(r"#(\d+)", out.stdout)
-    return int(m.group(1)) if m else None
+    return None
 
 
 def _banner_update(card_py: Path, board: Path, num: int,
                    done: int, total: int, cards_so_far: int,
                    phase: str = "", label_override: str | None = None) -> None:
-    args = [sys.executable, str(card_py), "--board", str(board), "update",
-            str(num),
-            "--title", f"🔄 extracting {done}/{total} chunks…",
-            "--notes", f"chunks done: {done}/{total}  cards emitted: {cards_so_far}"]
-    try:
-        subprocess.run(args, capture_output=True, text=True, timeout=4)
-    except subprocess.SubprocessError:
-        pass
-    # #327 — label_override lets the tier-1→tier-2 handoff replace the generic
-    # "chunk N/M" line with e.g. "day-1 replayed in 8s · speeding up ▸▸".
+    # The notes-column banner card is gone (num is None) — progress lives only
+    # on the HUD now. #327 — label_override lets the tier-1→tier-2 handoff
+    # replace the generic "chunk N/M" line with e.g. "day-1 replayed in 8s ▸▸".
     _emit_progress(card_py, board, done, total,
                    label_override or f"chunk {done}/{total} · {cards_so_far} cards emitted",
                    phase)
@@ -85,16 +69,10 @@ def _banner_update(card_py: Path, board: Path, num: int,
 def _banner_finish(card_py: Path, board: Path, num: int,
                    n_cards: int, n_buckets: int, n_chunks: int,
                    n_moved: int = 0) -> None:
-    recon_tag = f", reconciled {n_moved}" if n_moved else ""
-    args = [sys.executable, str(card_py), "--board", str(board), "update",
-            str(num),
-            "--title", f"✓ extraction done — {n_cards} cards{recon_tag}",
-            "--notes", f"emitted {n_cards} card(s) across {n_buckets} bucket(s) "
-                       f"in {n_chunks} chunk(s). recon moved {n_moved} card(s)."]
-    try:
-        subprocess.run(args, capture_output=True, text=True, timeout=4)
-    except subprocess.SubprocessError:
-        pass
+    # The notes-column banner card is gone — nothing to finalize. The HUD's
+    # final state is driven by the last _banner_update / the HUD's own done
+    # handling. Kept as a no-op so callers don't need to change.
+    return None
 
 
 def _card_add(card_py: Path, board: Path, card: dict) -> int | None:
