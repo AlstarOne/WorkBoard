@@ -51,14 +51,43 @@ def read() -> dict:
         return {}
 
 
+def _pid_alive(pid: int) -> bool:
+    """True if a process with `pid` exists. Signal 0 probes without killing."""
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError):
+        # EPERM means it exists but we can't signal it — still alive.
+        return True
+    return True
+
+
+def prune(d: dict | None = None) -> dict:
+    """Drop entries whose server PID is dead OR whose board dir no longer
+    exists on disk. Returns the cleaned dict. This is the real self-heal the
+    module's docstring promised: transient paths (e.g. /tmp demo runs) never
+    reboot to stomp their own row, so without an active prune they accrete
+    forever (#374 — registry hit 53 entries, 52 dead). Cheap: one os.kill(,0)
+    + one stat per row."""
+    if d is None:
+        d = read()
+    cleaned = {
+        k: v for k, v in d.items()
+        if isinstance(v, dict)
+        and _pid_alive(v.get("pid", -1))
+        and Path(k).exists()
+    }
+    return cleaned
+
+
 def write(board_dir: str | os.PathLike, port: int, pid: int) -> None:
     """Register THIS process as serving `board_dir` on `port`. Idempotent.
 
-    Stomps any prior entry for the same board path (the prior server is
-    presumed dead — only one launchd plist exists per port, so a new boot
-    overrides any stale row)."""
+    Prunes dead/stale rows first (self-heal), then stomps any prior entry for
+    the same board path (the prior server is presumed dead)."""
     key = str(Path(board_dir).resolve())
-    d = read()
+    d = prune(read())
     d[key] = {
         "port": int(port),
         "pid": int(pid),
