@@ -89,7 +89,7 @@ The hardest design constraint, and the one that separates this from every kanban
 
 ## Distribution
 
-- Installed as a Claude Code **skill** (`~/.claude/skills/board-steward`), so it shows up in the available-skills list and triggers on the right user phrases automatically.
+- Installed as a Claude Code **plugin** (`board-steward@skills-dir`, symlinked into `~/.claude/skills/board-steward`): it bundles the board-steward *skill* — so it shows up in the available-skills list and triggers on the right user phrases automatically — plus the four `SessionStart`/`UserPromptSubmit`/`PreToolUse`/`Stop` hooks (in `hooks/hooks.json`, loaded via `${CLAUDE_PLUGIN_ROOT}`), so no hand-wiring in `settings.json`.
 - Source-of-truth repo at `~/Desktop/WorkBoard/`, published as open source.
 - `python serve.py --bootstrap` is the one command anyone runs to get going. No npm, no Docker, no Postgres — pure stdlib Python + a single HTML file.
 
@@ -143,7 +143,7 @@ If you find yourself responding to a substantive prompt without having read thes
    - **Bounded files.** Files stay readable (rough ceiling ~1,000 LOC). When a file outgrows its job, split it along concern lines (the #307 split pattern), keeping the public interface stable.
    - **No god-functions.** A function does one thing. Long-but-FLAT (a declarative list, a linear sequence) is acceptable; long-AND-TANGLED (deep nesting + mixed concerns) is not — extract named helpers. **Function length is a style hint, not the test; nesting depth + mixed concerns is the real smell.**
    - **Shallow, one-directional coupling.** Leaf utilities (`_boardio`, `_render`, `_metrics`, `_hook_*`) are imported by callers; they never reach back up. **Zero circular imports** — verify with a clean import of every module.
-   - **No duplication.** One source of truth. The repo `scripts/` is canonical; the installed skill dir is synced from it by hook (#302) — never hand-edit the copy.
+   - **No duplication.** One source of truth. The repo `scripts/` is canonical; the installed plugin dir is synced from it by hook (#302) — never hand-edit the copy.
    - **Don't branch forever.** Architecture = boundaries, coupling, duplication, dependency direction. Once those are clean, STOP — do not chase every function under an arbitrary line count. That loop never converges and is not what "clean" means.
 
    **Current architecture (the tree — keep this accurate when modules change):**
@@ -215,5 +215,5 @@ If you find yourself responding to a substantive prompt without having read thes
 ## Shorthand aliases (user vocab)
 
 - **`ss`** → screenshot. Always lives in `~/Desktop/ss/`. When user says "see latest ss" / "in desktop/ss", read the newest file in that directory with the `Read` tool.
-- **`wb`** → WorkBoard. The kanban skill repo at `~/Desktop/WorkBoard/`, served at `http://127.0.0.1:7892` (separate from the QuantifyMe board on `:7891`).
+- **`wb`** → WorkBoard. The kanban plugin repo at `~/Desktop/WorkBoard/`, served at `http://127.0.0.1:7892` (separate from the QuantifyMe board on `:7891`).
 - **`qm`** → QuantifyMe. The trading product at `~/Desktop/QuantifyMe/HFTAgents/`, board served at `http://127.0.0.1:7891`.

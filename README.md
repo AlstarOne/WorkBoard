@@ -2,7 +2,11 @@
 
 A live kanban work-board for Claude Code agents and the humans they work with. The board is **the source of truth for active work** — Claude reads/writes it at session start, after every shipped task, and at session end, so nothing in a branching todo tree gets dropped.
 
-Originally built as the `board-steward` Claude Code skill; this repo is the canonical source.
+Packaged as the `board-steward` Claude Code **plugin** — it bundles the board-steward *skill* (`SKILL.md`, the playbook Claude follows) plus the four `SessionStart` / `UserPromptSubmit` / `PreToolUse` / `Stop` hooks that keep the board live. This repo is the canonical source.
+
+board-steward has **two halves**, kept distinct:
+- **History Replay** — the retrospective *bootstrapping* fill: mine a project's past `~/.claude` session history and fly cards onto a fresh board so a new user opens it already showing last week's work.
+- **Live tracking** — the going-forward capture: as you work, Claude files/moves/ships cards in real time (driven by the bundled hooks).
 
 **Token cost.** ~80 tokens of skill-list description (always-on). ~130 tokens once per session for the board digest. The full `SKILL.md` (~7.7K tokens) loads only when Claude actively engages with the board. `board.json` itself (can be 130 KB+) lives on disk and is never auto-loaded — Claude queries it via `card.py` CLI primitives that return tens to a few thousand tokens per call. See [`docs/TOKEN_BUDGET.md`](docs/TOKEN_BUDGET.md) for measurements + peer benchmarks (claude-mem, mem0, letta, graphify, CLAUDE.md baseline).
 
@@ -15,7 +19,7 @@ Originally built as the `board-steward` Claude Code skill; this repo is the cano
   - `_boardio.py` · `_render.py` · `_metrics.py` — shared internals (write-safety, HTML/MD renderers, velocity compute) imported by both `card.py` and `serve.py`.
   - `regen_index.py` — produces a small `index.json` digest for cheap Tier-1 reads
   - `archive_done.py` — sweeps Done cards older than 14d into monthly archives
-  - `discover.py` / `discover2.py` / `hourly_extractor.py` — the **History Replay**: mine `~/.claude/projects/*/sessions/*.jsonl` and fly cards onto a fresh board so a new user opens the board and already sees their last week of work, animated in card-by-card
+  - `discover.py` / `discover2.py` / `hourly_extractor.py` — the **History Replay**: mine `~/.claude/projects/*/*.jsonl` and fly cards onto a fresh board so a new user opens the board and already sees their last week of work, animated in card-by-card
   - `digest_compact.py` — lossless token-cut applied to each History Replay digest before extraction (drops zero-signal boilerplate, never a file/commit/decision line)
   - `log_event.py` / `report.py` — Steward self-telemetry
   - `install_hooks.py` — wires the Claude Code hooks: `SessionStart` (board digest once per session) + `PreToolUse` (flashes a card when Claude edits a file linked to it)
@@ -26,14 +30,14 @@ Originally built as the `board-steward` Claude Code skill; this repo is the cano
   - `board.json` — empty-board starter (6 default columns: Task / Backlog / In Progress / Done / Notes / Mandatory)
   - `tag-profiles.json` — 5 industry tag taxonomies (software / marketing / research / product / operations)
 
-## Repo vs installed skill (source of truth)
+## Repo vs installed plugin (source of truth)
 
 board-steward lives in two places, on purpose:
 
 | | Path | Role |
 |---|---|---|
 | **Dev repo** | `~/Desktop/WorkBoard/` | **Source of truth.** Git history, the live dev `board/`, the `training_data/` corpus. Edit here. |
-| **Installed skill** | `~/.agents/skills/board-steward/` | The clean, standalone copy Claude Code actually loads — repo minus `.git`/`board`/`training_data`/cruft. Never edit here. |
+| **Installed plugin** | `~/.agents/skills/board-steward/` | The clean, standalone copy Claude Code actually loads — repo minus `.git`/`board`/`training_data`/cruft. Never edit here. |
 
 The installed copy is kept in lockstep by **one** path — no manual `cp`:
 
@@ -42,7 +46,7 @@ dev/sync_skill.sh          # mirror repo → installed skill (rsync, drops dev c
 dev/sync_skill.sh --check  # report drift only (exit 1 if they differ)
 ```
 
-`dev/install_git_hooks.sh` installs a **`post-commit`** hook that runs the sync on every commit, so the installed skill always reflects the last committed state. (`install.sh` is the separate copy-based path for end users who don't have the repo.) Run the hook installer once after cloning.
+`dev/install_git_hooks.sh` installs a **`post-commit`** hook that runs the sync on every commit, so the installed plugin always reflects the last committed state. (`install.sh` is the separate copy-based path for end users who don't have the repo.) Run the hook installer once after cloning.
 
 ## History Replay
 
@@ -81,7 +85,7 @@ python ~/Desktop/WorkBoard/scripts/install_autostart.py --project $(pwd) --port 
 
 Then either point Claude at the board (it'll invoke the skill) or open the URL in any browser.
 
-Without the hook, the board silently drifts during long active-coding sessions — Claude forgets to invoke the skill mid-flow, and the user has to ask "did you update the board?" That question is the failure mode this skill exists to prevent.
+Without the hook, the board silently drifts during long active-coding sessions — Claude forgets to invoke the skill mid-flow, and the user has to ask "did you update the board?" That question is the failure mode this plugin exists to prevent.
 
 ## Verify the install
 

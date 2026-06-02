@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# install.sh — one-command installer for WorkBoard / the board-steward skill.
+# install.sh — one-command installer for WorkBoard / the board-steward plugin
+# (a skills-dir plugin: it bundles the board-steward skill + the four hooks).
 #
 # The "one command to install" promise (VISION §Distribution + §3). A new user
 # downloads this repo and runs:

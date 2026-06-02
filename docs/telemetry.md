@@ -78,7 +78,7 @@ If the call fails (e.g. python missing), the Steward continues — telemetry is 
 ## Privacy / portability
 
 - File is **append-only**. Never deleted by the skill.
-- Lives in the skill dir, not per-project — so the metrics travel with the skill.
+- Lives in the plugin dir, not per-project — so the metrics travel with the plugin.
 - To partition by project, use `--project <path>` on report.py (events carry the `project` field).
 - Manually rotate with `mv events.jsonl events.YYYY-MM.jsonl && touch events.jsonl`.
 

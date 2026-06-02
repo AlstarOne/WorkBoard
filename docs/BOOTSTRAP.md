@@ -1,6 +1,6 @@
 # Board Steward — PART 1: Bootstrap & Install (one-time)
 
-> **This is the one-time / first-install half of the skill.** Everything here runs
+> **This is the one-time / first-install half of the plugin.** Everything here runs
 > **once** when a project first gets a board (or when wiring hooks/autostart on a new
 > machine). The **going-forward LIVE protocol** — the per-turn `task → In Progress → Done`
 > lifecycle you run every session — lives in `SKILL.md`. Read this file only when
@@ -103,7 +103,7 @@ correct installer (`--dry-run` still previews on any OS).
 
 ---
 
-## Helper scripts (shipped with this skill)
+## Helper scripts (shipped with this plugin)
 
 Live at `~/.agents/skills/board-steward/scripts/`:
 
