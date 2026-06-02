@@ -204,6 +204,61 @@ def find_convo_dir(project: Path, asked: bool = False) -> Path | None:
     return None
 
 
+# ---------- project enumeration (#375) ----------
+
+def _human_ago(ts: datetime, now: datetime) -> str:
+    secs = max(0, (now - ts).total_seconds())
+    if secs < 3600:
+        return f"{int(secs // 60)}m ago"
+    if secs < 86400:
+        return f"{int(secs // 3600)}h ago"
+    return f"{int(secs // 86400)}d ago"
+
+
+def list_projects(since: datetime | None) -> list[dict]:
+    """Enumerate the project working-dirs the user actually worked in, ranked by
+    recency (#375). Uses the SAME convo/session signal the task extractor uses —
+    the `cwd` recorded on every harvested session turn (harvest_jsonl +
+    harvest_history) — NOT a filesystem walk of $HOME and NOT git-root resolution
+    (deliberately simple, per the agreed design). Historical session cwds are
+    meaningful even when the installer's launch-cwd is $HOME: the user cd's into
+    a real repo to work, so that repo's path is what each turn records.
+
+    A 'project' here is a distinct cwd. Subdir cwds of one repo may appear as
+    separate entries — acceptable for a single-pick list; resolving them to a
+    common root is the explicitly-deferred git-walk we chose not to build."""
+    events = harvest_jsonl(since)
+    seen = {(e.get("meta") or {}).get("sessionId") for e in events}
+    events.extend(harvest_history(since, exclude_sessions=seen))  # gap-fill
+    now = datetime.now(timezone.utc)
+    agg: dict[str, dict] = {}
+    for e in events:
+        if e["kind"] != "user_prompt":
+            continue
+        cwd = (e.get("meta") or {}).get("cwd") or ""
+        if not cwd:
+            continue
+        a = agg.get(cwd)
+        if a is None:
+            a = {"cwd": cwd, "n_prompts": 0, "sessions": set(), "last_ts": e["ts"]}
+            agg[cwd] = a
+        a["n_prompts"] += 1
+        sid = (e.get("meta") or {}).get("sessionId")
+        if sid:
+            a["sessions"].add(sid)
+        if e["ts"] > a["last_ts"]:
+            a["last_ts"] = e["ts"]
+    rows = sorted(agg.values(), key=lambda r: r["last_ts"], reverse=True)
+    return [{
+        "project": r["cwd"],
+        "name": Path(r["cwd"]).name or r["cwd"],
+        "last_activity": r["last_ts"].isoformat(),
+        "ago": _human_ago(r["last_ts"], now),
+        "n_prompts": r["n_prompts"],
+        "n_sessions": len(r["sessions"]),
+    } for r in rows]
+
+
 # ---------- main ----------
 
 def main():
@@ -223,8 +278,32 @@ def main():
                     help="fall back to discover.py")
     ap.add_argument("--ask-convo", action="store_true",
                     help="ask for conversation dir if not auto-found")
+    ap.add_argument("--list-projects", action="store_true",
+                    help="#375: enumerate distinct project cwds from session "
+                         "history (ranked by recency) instead of extracting "
+                         "tasks. For the install-time project picker.")
+    ap.add_argument("--format", choices=("json", "lines"), default="json",
+                    help="--list-projects output: json (default) or tab-"
+                         "separated 'path<TAB>label' lines for shell pickers.")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
+
+    since = (datetime.now(timezone.utc) - timedelta(days=args.days)
+             if args.days > 0 else None)
+
+    if args.list_projects:
+        rows = list_projects(since)
+        if args.format == "lines":
+            for r in rows:
+                label = (f"{r['project']}  "
+                         f"({r['ago']}, {r['n_prompts']} prompt"
+                         f"{'s' if r['n_prompts'] != 1 else ''})")
+                sys.stdout.write(f"{r['project']}\t{label}\n")
+        else:
+            json.dump({"projects": rows}, sys.stdout, indent=2,
+                      ensure_ascii=False, default=str)
+            sys.stdout.write("\n")
+        return
 
     if args.legacy:
         legacy = Path(__file__).resolve().parent / "discover.py"
@@ -233,8 +312,6 @@ def main():
                                    "--days", str(args.days)])
         return  # not reached
 
-    since = (datetime.now(timezone.utc) - timedelta(days=args.days)
-             if args.days > 0 else None)
     project = args.project.resolve()
 
     convo_dir = find_convo_dir(project)

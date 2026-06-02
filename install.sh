@@ -41,6 +41,8 @@ ORIG_CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-}"
 
 # ---- defaults ----------------------------------------------------------------
 PROJECT="$(pwd)"
+PROJECT_EXPLICIT=0   # set when --project is passed → skip the #375 picker
+PICK_DAYS=3          # history window the #375 project picker scans
 PORT=7891
 DEMO=0
 OPEN_BROWSER=1
@@ -55,7 +57,7 @@ usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --project) PROJECT="$2"; shift 2 ;;
+    --project) PROJECT="$2"; PROJECT_EXPLICIT=1; shift 2 ;;
     --port)    PORT="$2"; shift 2 ;;
     --demo)    DEMO=1; shift ;;
     --harvest) HARVEST="$2"; shift 2 ;;
@@ -109,6 +111,46 @@ fi
 
 echo
 say "WorkBoard installer  (repo: ${REPO})"
+
+# ---- 0. project picker (#375) ------------------------------------------------
+# Users launch the terminal at $HOME, so PROJECT=$(pwd) resolves to $HOME — no
+# project context, useless for a board. When that's the case (and we're
+# interactive, not a demo, no explicit --project / --harvest), DISCOVER the
+# projects the user actually worked in from session history (discover2's cwd
+# signal — same convo source the task extractor uses; NO git-root walking, NO
+# $HOME filesystem scan) and let them single-pick one. Running inside a real
+# repo (PROJECT != $HOME) keeps the old cwd behaviour untouched.
+if [ "$DEMO" = "0" ] && [ "$PROJECT_EXPLICIT" = "0" ] && [ -z "$HARVEST" ] \
+   && [ -t 0 ] && [ "$PROJECT" = "$HOME" ]; then
+  PICK_PATHS=(); PICK_LABELS=()
+  while IFS=$'\t' read -r _p _label; do
+    [ -n "$_p" ] || continue
+    PICK_PATHS+=("$_p"); PICK_LABELS+=("$_label")
+  done < <("$PY" "${SCRIPTS}/discover2.py" --list-projects \
+             --days "$PICK_DAYS" --format lines 2>/dev/null || true)
+
+  if [ "${#PICK_PATHS[@]}" -gt 0 ]; then
+    echo
+    say "You launched from \$HOME. Recent projects from your history:"
+    _i=1
+    for _label in "${PICK_LABELS[@]}"; do
+      printf '   %d) %s\n' "$_i" "$_label"; _i=$((_i + 1))
+    done
+    printf '   Pick a project to open a board for [1-%d, or paste a path] (default 1): ' "${#PICK_PATHS[@]}"
+    read -r _ans || _ans=""
+    if [ -z "$_ans" ]; then
+      PROJECT="${PICK_PATHS[0]}"
+    elif printf '%s' "$_ans" | grep -Eq '^[0-9]+$' \
+         && [ "$_ans" -ge 1 ] && [ "$_ans" -le "${#PICK_PATHS[@]}" ]; then
+      PROJECT="${PICK_PATHS[$((_ans - 1))]}"
+    else
+      PROJECT="${_ans/#\~/$HOME}"   # treat as a literal path (expand leading ~)
+    fi
+    ok "project → ${PROJECT}"
+  else
+    warn "no recent projects found in history — using \$HOME (${PROJECT})"
+  fi
+fi
 
 # ---- 1. skill ----------------------------------------------------------------
 if [ "$DO_SKILL" = "1" ]; then
