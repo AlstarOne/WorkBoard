@@ -188,6 +188,45 @@ def _cwd_in_project(event: dict, project: Path) -> bool:
     return False
 
 
+def _event_in_project(event: dict, project: Path) -> bool:
+    """Does this turn's WORK belong to `project`? (#508 follow-up.)
+
+    Attribute by what the turn actually CHANGED, not just where it ran: cwd is
+    frequently $HOME while editing another project's files by absolute path
+    (e.g. a home session editing WorkBoard/templates/board.html), so cwd alone
+    both leaks other projects' work AND drops in-project work. Files touched are
+    the decisive signal; cwd is only the fallback when a turn edited nothing
+    (user prompts, memory/plans/convo events carry no files).
+
+    - edited a file under the project → belongs here (True), whatever the cwd
+    - edited ONLY other projects' files → not here (False)
+    - no decisive file signal → fall back to cwd scoping
+    This is what lets one conversation that hops between projects split cleanly.
+    """
+    files = event.get("files") or []
+    if files:
+        try:
+            pp = project.resolve()
+        except OSError:
+            pp = project
+        touched_here = touched_other = False
+        for f in files:
+            try:
+                fp = Path(f).resolve()
+            except OSError:
+                continue
+            if fp == pp or pp in fp.parents:
+                touched_here = True
+            else:
+                touched_other = True
+        if touched_here:
+            return True
+        if touched_other:
+            return False
+        # files present but none resolved to a real path → fall through to cwd
+    return _cwd_in_project(event, project)
+
+
 def _anchor_offset_days(project: Path) -> int:
     """Days between now and the project's LAST session (0 = worked today).
 
@@ -327,7 +366,7 @@ def _filter_events(events: list[dict], project: Path,
     # them here is exactly how another project's work (Edu) leaked onto this
     # board (#508). Events with no cwd (memory/plans/convo) are kept by
     # _cwd_in_project's empty-cwd rule.
-    scoped = [e for e in events if _cwd_in_project(e, project)]
+    scoped = [e for e in events if _event_in_project(e, project)]
     # #285 never-empty first-run seed: a brand-new repo has ZERO in-project
     # user prompts, so project-scoping strips all conversation signal and the
     # board comes up blank on day one — silently breaking VISION's "see your
