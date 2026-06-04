@@ -123,23 +123,23 @@ path<TAB>label):
 
 ${projects}
 
-ACTION (do this now, don't wait to be asked): call AskUserQuestion with the
-project options below. Do NOT also print the question as a separate chat line —
-no double-ask. Put ALL meaning in the HEADER and OPTION labels/descriptions:
-those render on every terminal theme, whereas the picker's own question-title
-field is dim/near-invisible on some themes — so nothing essential may rely on it.
+ACTION (do this now, don't wait to be asked): PRINT the projects above as a
+NUMBERED LIST in a normal chat message (plain markdown — it renders on EVERY
+terminal theme). Do NOT call AskUserQuestion: its question-title field is
+invisible on any theme that mismatches the terminal background (e.g. the default
+dark theme on a light terminal, or vice-versa), which silently hides the
+question — so we use plain text the user can always read. Then ask the user to
+reply with the NUMBER (or a path). Use this shape verbatim (no bold/asterisks):
 
-  question: "Which project should get your first WorkBoard?"
-  header:   "Project"   (always-visible chip — tells the user what they're choosing)
-  options:  one per listed project — label = the project name; description = the
-            FULL PATH + the "(ago, N sessions, N edits)" detail (e.g.
-            "~/code/acme-api — 12m ago, 638 sessions, 500 edits"). Append to the
-            FIRST option's description: "Your first board — add more later by
-            asking to open a board for another project." If their project isn't
-            listed, they can type its path.
-  (no markdown bold/asterisks in option text — literal ** renders oddly in the picker.)
+  Which project should get your first WorkBoard? Reply with a number (or paste a path):
+    1. <project name> — <FULL PATH>  (<ago, N sessions, N edits>)
+    2. <project name> — <FULL PATH>  (<ago, …>)
+    …
+  You can add more boards later by asking to open a board for another project.
+  If your project isn't listed, just paste its path.
 
-When they pick a project at PATH, create + open the board by running:
+Wait for their reply; do NOT pick for them. When they reply, resolve their
+number/path to the project PATH and create + open the board by running:
 
   bash "${hook_dir}/bootstrap_project.sh" "PATH"
 
