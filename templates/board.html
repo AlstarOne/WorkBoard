@@ -1636,6 +1636,17 @@ let _colLastPreviewTargetId = null;  // #119 — idempotence guard for dragover 
 // #119 — visible drag HUD. Prints every drag/mouse event as a green-on-black
 // overlay so events are visible regardless of console filters. Header bar
 // is a drag handle (mousedown to move); position persists to localStorage.
+// #71 — clamp a RESTORED HUD position to the CURRENT viewport. A position saved
+// on a wider window / second monitor (or before the window shrank) would
+// otherwise paint the HUD off-screen — the "HUD doesn't appear, no console
+// error" bug. Mirrors the clamp the drag handlers already apply on move.
+function clampHudPos(left, top, w) {
+  w = w || 60;
+  return {
+    left: Math.max(0, Math.min(window.innerWidth  - w,  left)),
+    top:  Math.max(0, Math.min(window.innerHeight - 24, top)),
+  };
+}
 const _HUD_POS_KEY = 'workboard.hudPos';
 function _dbgHud() {
   let hud = document.getElementById('drag-hud');
@@ -1647,8 +1658,9 @@ function _dbgHud() {
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(_HUD_POS_KEY) || 'null'); } catch (e) {}
   if (saved && Number.isFinite(saved.left) && Number.isFinite(saved.top)) {
-    hud.style.left = saved.left + 'px';
-    hud.style.top = saved.top + 'px';
+    const p = clampHudPos(saved.left, saved.top);   // #71 keep on-screen
+    hud.style.left = p.left + 'px';
+    hud.style.top = p.top + 'px';
   } else {
     hud.style.top = '64px';
     hud.style.right = '12px';
@@ -1728,8 +1740,9 @@ function _logsHud() {
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(_LOGS_HUD_POS_KEY) || 'null'); } catch (e) {}
   if (saved && Number.isFinite(saved.left) && Number.isFinite(saved.top)) {
-    hud.style.left = saved.left + 'px';
-    hud.style.top  = saved.top + 'px';
+    const p = clampHudPos(saved.left, saved.top);   // #71 keep on-screen
+    hud.style.left = p.left + 'px';
+    hud.style.top  = p.top + 'px';
   } else {
     hud.style.right  = '12px';
     hud.style.bottom = '12px';
@@ -5063,7 +5076,7 @@ function renderColumn(col, cards) {
         '<div class="lh-tail" id="lh-tail">&nbsp;</div>'+
       '</div>';
     let s = null; try { s = JSON.parse(localStorage.getItem(POS_KEY) || 'null'); } catch (e) {}
-    if (s && isFinite(s.left) && isFinite(s.top)) { h.style.left = s.left+'px'; h.style.top = s.top+'px'; }
+    if (s && isFinite(s.left) && isFinite(s.top)) { const p = clampHudPos(s.left, s.top); h.style.left = p.left+'px'; h.style.top = p.top+'px'; }   // #71 keep on-screen
     else { h.style.top = '110px'; h.style.right = '12px'; }
     document.body.appendChild(h);
     const head = h.querySelector('#load-hud-head'); let d = null;
