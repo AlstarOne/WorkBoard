@@ -114,9 +114,13 @@ path<TAB>label):
 
 ${projects}
 
-ACTION (do this now, don't wait to be asked): call AskUserQuestion. Use THIS
-question text verbatim (plain text — do NOT add markdown bold/asterisks; the
-picker styles the question itself and literal ** renders invisible):
+ACTION (do this now, don't wait to be asked): FIRST print the question below as
+a normal chat line (plain markdown — it renders visibly), THEN call
+AskUserQuestion with the project options. The picker renders its own question
+title in a color that is invisible on some terminal themes, so the chat line
+above it is what the user actually reads; the picker's clickable options stay
+visible regardless. Use THIS question text verbatim in both places (no markdown
+bold/asterisks — literal ** renders invisible in the picker field):
 
   Which project should get your first WorkBoard? (You can add more later by asking to open a board for another project.)
 
