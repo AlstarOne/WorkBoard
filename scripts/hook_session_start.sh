@@ -115,10 +115,10 @@ path<TAB>label):
 ${projects}
 
 ACTION (do this now, don't wait to be asked): call AskUserQuestion. Use THIS
-question text verbatim (the main question bolded, the parenthetical in normal
-weight):
+question text verbatim (plain text — do NOT add markdown bold/asterisks; the
+picker styles the question itself and literal ** renders invisible):
 
-  **Which project should get your first WorkBoard?** (You can add more later by asking to open a board for another project.)
+  Which project should get your first WorkBoard? (You can add more later by asking to open a board for another project.)
 
 Header: "Project". Make each listed project an option: label = the project name,
 description = the FULL PATH + the "(ago, N sessions, N edits)" detail (e.g.
