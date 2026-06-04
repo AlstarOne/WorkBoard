@@ -227,16 +227,12 @@ def _event_in_project(event: dict, project: Path) -> bool:
     return _cwd_in_project(event, project)
 
 
-def _anchor_offset_days(project: Path) -> int:
-    """Days between now and the project's LAST session (0 = worked today).
+def _last_activity_ms(project: Path) -> int:
+    """Newest ~/.claude/history.jsonl timestamp (ms) for this project, or 0.
 
-    The fly-in window must END at the last session, not at `now` — otherwise an
-    idle gap (e.g. didn't work for 2 days) empties a 2-day window and nothing
-    flies in. We read ~/.claude/history.jsonl (the cheap all-projects prompt
-    chronicle: one record per typed prompt with {project=cwd, timestamp=ms}),
-    take the newest record whose cwd matches this project (same nesting rule as
-    _cwd_in_project), and return whole days since. Returns 0 (anchor = now =
-    legacy behavior) if history is missing/pruned for this project."""
+    history.jsonl is the cheap all-projects prompt chronicle: one record per
+    typed prompt with {project=cwd, timestamp=ms}. We take the newest record
+    whose cwd matches this project (same nesting rule as _cwd_in_project)."""
     hist = Path.home() / ".claude" / "history.jsonl"
     if not hist.exists():
         return 0
@@ -273,6 +269,17 @@ def _anchor_offset_days(project: Path) -> int:
                     newest_ms = ms
     except OSError:
         return 0
+    return newest_ms
+
+
+def _anchor_offset_days(project: Path) -> int:
+    """Days between now and the project's LAST session (0 = worked today).
+
+    The fly-in window must END at the last session, not at `now` — otherwise an
+    idle gap (e.g. didn't work for 2 days) empties a 2-day window and nothing
+    flies in. Returns 0 (anchor = now = legacy behavior) if history is
+    missing/pruned for this project."""
+    newest_ms = _last_activity_ms(project)
     if not newest_ms:
         return 0
     last = datetime.fromtimestamp(newest_ms / 1000.0, tz=timezone.utc)
@@ -352,6 +359,97 @@ def _run_snapshot_load(board: Path, card_py: Path,
         n_moved = reconcile_sweep(card_py, board, events)
         print(f"✓ recon-only run: moved {n_moved} card(s)",
               file=sys.stderr)
+
+
+# ---------- SessionStart smart-recon (--reconcile-only) ----------
+
+def _recon_state_path(board: Path) -> Path:
+    return board.parent / ".recon_state.json"
+
+
+def _read_last_recon_ms(board: Path) -> int:
+    """Epoch-ms of the last reconcile run for this board, or 0 if never."""
+    try:
+        raw = json.loads(_recon_state_path(board).read_text()).get("last_recon_ms")
+        return int(raw) if raw else 0
+    except Exception:
+        return 0
+
+
+def _write_last_recon_ms(board: Path, ms: int) -> None:
+    try:
+        _recon_state_path(board).write_text(json.dumps({"last_recon_ms": int(ms)}))
+    except OSError:
+        pass
+
+
+def _has_nondone_cards(board: Path) -> bool:
+    """True if any non-banner card sits in a reconcilable (non-done) column."""
+    try:
+        state = json.loads(board.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    return any(
+        c.get("column") in ("task", "backlog", "inprogress", "notes")
+        and "banner" not in (c.get("tags") or [])
+        for c in state.get("cards", [])
+    )
+
+
+def _run_reconcile_only(project: Path, board: Path) -> None:
+    """SessionStart smart-recon: reconcile EVERY non-done card against activity
+    since the last recon. Two cheap gates keep it token-frugal for free users —
+    no Haiku call unless there are non-done cards AND new activity since the last
+    run. Reconcile-only (only_discovered=False) — no card creation here; net-new
+    un-carded work is the Stop hook's job."""
+    card_py = Path(__file__).resolve().parent / "card.py"
+    if not card_py.exists():
+        return
+
+    # Gate A: nothing to reconcile → no harvest, no Haiku.
+    if not _has_nondone_cards(board):
+        print("recon-only: no non-done cards — skip", file=sys.stderr)
+        return
+
+    # Gate B: gate on PROJECT-SCOPED activity (history.jsonl, the same oracle
+    # _anchor_offset_days trusts). No recorded activity for this project → nothing
+    # to reconcile against; activity older than the last recon → nothing new.
+    # Either way, skip before harvesting/Haiku. (Harvest keeps no-cwd global
+    # events like memory/plans, so we can't rely on harvest-emptiness here.)
+    last_ms = _read_last_recon_ms(board)
+    activity_ms = _last_activity_ms(project)
+    if not activity_ms:
+        print("recon-only: no recorded project activity — skip", file=sys.stderr)
+        return
+    if last_ms and activity_ms <= last_ms:
+        print("recon-only: no new activity since last recon — skip",
+              file=sys.stderr)
+        return
+
+    # Window = since the last recon (first run → last 2 days), capped at 14d so a
+    # long-idle project doesn't harvest forever.
+    now = datetime.now(timezone.utc)
+    if last_ms:
+        span_days = (now - datetime.fromtimestamp(last_ms / 1000.0,
+                                                   tz=timezone.utc)).days
+        days = max(1, min(span_days + 1, 14))
+    else:
+        days = 2
+
+    events = _flatten_events(project, days,
+                             sources={"jsonl", "history", "convo", "git"})
+    # Scope to THIS project (harvest is global) — reconcile a board only against
+    # its own activity, never another project's. Mirrors _run_window.
+    events = _filter_events(events, project, None, 0) or []
+    if not events:
+        print("recon-only: no activity in window — skip", file=sys.stderr)
+        # Still stamp the marker so we don't re-harvest the same empty window.
+        _write_last_recon_ms(board, int(now.timestamp() * 1000))
+        return
+
+    n = reconcile_sweep(card_py, board, events, only_discovered=False)
+    print(f"✓ recon-only: moved {n} card(s)", file=sys.stderr)
+    _write_last_recon_ms(board, int(now.timestamp() * 1000))
 
 
 def _filter_events(events: list[dict], project: Path,
@@ -791,7 +889,15 @@ def main():
                     help="don't extract — harvest+bucketize only and print a "
                          "JSON fill estimate {chunks,eta_sec,eta_min} so the "
                          "caller can tell the user '≈N min to fill'. No haiku.")
+    ap.add_argument("--reconcile-only", action="store_true",
+                    help="SessionStart smart-recon: skip extraction entirely; "
+                         "reconcile every non-done card against activity since "
+                         "the last recon (gated to avoid a Haiku call when "
+                         "there's nothing new). No card creation.")
     args = ap.parse_args()
+    if args.reconcile_only:
+        _run_reconcile_only(args.project.resolve(), args.board.resolve())
+        return
     if args.estimate_only:
         est = estimate_fill(
             args.project.resolve(), args.days, args.bucket_min,
