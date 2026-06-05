@@ -306,9 +306,12 @@ def reconcile_sweep(card_py: Path, board: Path, events: list[dict],
           file=sys.stderr)
     # Live HUD line so the user knows WHY cards are about to move (#recon-hud) —
     # shown on both the bootstrap fill HUD and a SessionStart recon.
+    # Short enough to fit the ~330px HUD window line (the old 62-char copy was
+    # cut off mid-sentence). Present-tense ACTION — the sweep is still running, so
+    # it can't yet claim an outcome ("nothing missed" is the result, shown on the
+    # ✓ final line below). Header already says "reconciling"; this is the why.
     _emit_progress(card_py, board, 0, 1,
-                   "catching the board up so nothing shipped or important is missed",
-                   "reconcile")
+                   "checking nothing's missed…", "reconcile")
     if banner_num:
         _banner_update_text(card_py, board, banner_num,
                             f"🔍 reconciling {len(candidates)} cards…")

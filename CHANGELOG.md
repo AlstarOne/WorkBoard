@@ -9,6 +9,19 @@ uses date-stamped pre-1.0 development entries until the first tagged release.
 
 Pre-release hardening toward `v1.0.0-rc.1`. Built across Plan v2 phases 0–6.
 
+### 0.9.12 — Lean HUD: drop the tail line, shorten reconcile copy (#78, 2026-06-05)
+- **Removed the redundant bottom tail line** (`#lh-tail`, e.g. "✓ chunk 2/7") from
+  **every** HUD state — it duplicated the window line and showed a differently-based
+  count that didn't tally with the headline. DOM element, the JS that wrote it, and
+  the now-unused `.lh-tail` CSS all removed. The HUD is now header → status+count →
+  one window line → bar.
+- **Shortened the reconcile copy** — "catching the board up so nothing shipped or
+  important is missed" (62 chars) overflowed the ~330px window and cut off
+  mid-sentence; the in-progress line is now the present-tense action
+  **"checking nothing's missed…"** (the *outcome* "nothing missed" stays on the ✓
+  final line; the header already says "reconciling"). Browser test now asserts the
+  tail is absent (17 checks).
+
 ### 0.9.11 — Single coherent BOARD-LOAD HUD (#78, 2026-06-05)
 - **One HUD across all three fill stages, no race.** The bootstrap fly-in HUD used
   to **complete + auto-hide then reappear** between stages — because the reconcile

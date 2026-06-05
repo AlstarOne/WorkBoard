@@ -110,6 +110,8 @@ def main():
             first = emit({"done": 0, "total": REP, "phase": "replay",
                           "label": "staged — beginning extraction…"})
             check(first["visible"], "HUD visible at start")
+            no_tail = page.evaluate("() => !document.getElementById('lh-tail')")
+            check(no_tail, "no #lh-tail line (lean HUD — bottom no.3 removed)")
             check(first["done"].lstrip("0") == "1" or first["done"] == "1",
                   f"starts 1-based (got {first['done']}/{first['total']}, want 1/{REP})")
 
@@ -129,7 +131,7 @@ def main():
                                      "label": "day-1 replayed in 6s · speeding up ▸▸"})
                 else:
                     last_rep = emit({"done": done, "total": REP, "phase": "replay",
-                                     "label": f"chunk {done}/{REP}"})
+                                     "label": f"{done * 3} card(s) emitted so far"})
             check(last_rep["done"] == str(REP) and last_rep["total"] == str(REP),
                   f"replay ends at {REP}/{REP} (got {last_rep['done']}/{last_rep['total']})")
             check(last_rep["visible"], "HUD still visible after replay (handoff, no hide)")
@@ -146,7 +148,7 @@ def main():
             last_sp = sp_first
             for done in range(1, SPD + 1):
                 last_sp = emit({"done": done, "total": SPD, "phase": "speedup",
-                                "label": f"chunk {done}/{SPD}"})
+                                "label": f"{REP*3 + done*2} card(s) emitted so far"})
             # speedup terminal: done==total, phase=speedup, NO final → handoff to reconcile
             check(last_sp["done"] == str(SPD),
                   f"speedup ends at {SPD}/{SPD} (got {last_sp['done']}/{last_sp['total']})")
@@ -158,7 +160,7 @@ def main():
 
             # ---- RECONCILE: start (0/1) then final (1/1, final=true) ----
             rec0 = emit({"done": 0, "total": 1, "phase": "reconcile",
-                         "label": "catching the board up…"})
+                         "label": "checking nothing's missed…"})
             check(rec0["visible"], "HUD visible during reconcile")
             shot("3_reconcile")
             check(completes["n"] == 0, "still no COMPLETE during reconcile start")

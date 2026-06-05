@@ -1529,7 +1529,6 @@
     background:linear-gradient(90deg,#0a0,#0f0);box-shadow:0 0 10px rgba(0,255,0,0.7);transition:transform .35s ease-out;}
   .lh-pct{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
     font-size:10px;font-weight:700;color:#001a00;text-shadow:0 0 2px rgba(255,255,255,0.4);font-variant-numeric:tabular-nums;}
-  .lh-tail{margin-top:7px;color:#3f8f4f;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .lh-cur{display:inline-block;width:7px;background:#0f0;color:#0f0;}
   @media (prefers-reduced-motion: no-preference){
     .lh-cur{animation:lh-blink 1s steps(1) infinite;}
@@ -5073,7 +5072,6 @@ function renderColumn(col, cards) {
         '<div class="lh-window" id="lh-window">awaiting staged digest…</div>'+
         '<div class="lh-track"><div class="lh-fill" id="lh-fill"></div>'+
           '<div class="lh-pct" id="lh-pct">0%</div></div>'+
-        '<div class="lh-tail" id="lh-tail">&nbsp;</div>'+
       '</div>';
     let s = null; try { s = JSON.parse(localStorage.getItem(POS_KEY) || 'null'); } catch (e) {}
     if (s && isFinite(s.left) && isFinite(s.top)) { const p = clampHudPos(s.left, s.top); h.style.left = p.left+'px'; h.style.top = p.top+'px'; }   // #71 keep on-screen
@@ -5123,7 +5121,7 @@ function renderColumn(col, cards) {
                  : phase === 'reconcile' ? '▶ RECONCILING'
                  : '▶ EXTRACTING';
       if (sb) sb.innerHTML = verb + '<span class="lh-cur">▋</span>';
-      if (label) { h.querySelector('#lh-window').textContent = label; h.querySelector('#lh-tail').textContent = '✓ '+label; }
+      if (label) h.querySelector('#lh-window').textContent = label;
       return HUD;
     },
     // #327 single-HUD — a stage finished but the WHOLE fill isn't over
