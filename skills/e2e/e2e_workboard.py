@@ -206,6 +206,40 @@ def test_recon_gates_short_circuit(ctx: Ctx):
                     "expected 'no recorded project activity' skip")
 
 
+def test_recon_replay_gate(ctx: Ctx):
+    """#recon-after-replay: SessionStart recon-only must STAND DOWN while a
+    bootstrap card-replay is streaming (completed_card_replay==0), and resume
+    once it finishes (==1). A board with no replay state is default-open."""
+    import importlib, hourly_extractor as HE; importlib.reload(HE)
+
+    def run(bj):
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "hourly_extractor.py"),
+             "--project", str(bj.parent.parent), "--board", str(bj),
+             "--reconcile-only"], capture_output=True, text=True, timeout=30).stderr
+
+    GATE_MSG = "card replay in progress"
+    # A non-done card so Gate A (no non-done cards) doesn't mask Gate 0.
+    bj = ctx.board([ctx.card(1, "inprogress", "wip")])
+
+    # Default-open: no .replay_state.json → gate must NOT fire.
+    ctx.assert_true("recon.replay-gate: no state → default-open",
+                    GATE_MSG not in run(bj), "gate fired without any replay state")
+
+    # Replay in progress (flag 0) → gate fires, stands down.
+    HE._mark_replay_started(bj, 2)
+    ctx.assert_true("recon.replay-gate: in-progress (0) → skip",
+                    GATE_MSG in run(bj), "gate did NOT stand down during replay")
+
+    # Replay complete (flag 1) → gate opens; falls through to the later gates
+    # (throwaway proj → Gate B 'no recorded project activity'), never the
+    # replay-skip. Proves completed_card_replay==1 re-enables reconcile.
+    HE._mark_replay_complete(bj)
+    out = run(bj)
+    ctx.assert_true("recon.replay-gate: complete (1) → proceeds",
+                    GATE_MSG not in out, "gate still firing after replay completed")
+
+
 def test_recon_claudecode_path(ctx: Ctx):
     """CLAUDECODE=1 → prose recon_pending (no Haiku). The unset→Haiku side is the
     recon-haiku E2E. This proves the spawn's `env -u CLAUDECODE` is load-bearing."""
@@ -249,7 +283,7 @@ def test_recon_haiku_e2e(ctx: Ctx):
 GROUPS = {
     "multiboard": [test_multiboard_routing_isolation, test_multiboard_disambiguation],
     "recon": [test_recon_only_discovered_flag, test_recon_gates_short_circuit,
-              test_recon_claudecode_path],
+              test_recon_replay_gate, test_recon_claudecode_path],
     "recon-haiku": [test_recon_haiku_e2e],
 }
 
