@@ -803,7 +803,8 @@ def cmd_progress(args, d, board):
         return
     body = json.dumps({"done": args.done, "total": args.total,
                        "label": args.label or "",
-                       "phase": getattr(args, "phase", "") or ""}).encode()
+                       "phase": getattr(args, "phase", "") or "",
+                       "final": bool(getattr(args, "final", False))}).encode()
     req = urllib.request.Request(
         url.rstrip("/") + "/progress", data=body, method="POST",
         headers={"Content-Type": "application/json", **_auth_headers()})

@@ -29,15 +29,18 @@ def _banner_update_text(card_py: Path, board: Path, num: int, title: str) -> Non
 # ---------- progress banner ----------
 
 def _emit_progress(card_py: Path, board: Path, done: int, total: int,
-                   label: str = "", phase: str = "") -> None:
+                   label: str = "", phase: str = "", final: bool = False) -> None:
     """#318 — drive the live BOARD-LOAD HUD via `card.py progress` (best-effort).
-    phase (#327) sets the HUD header: replay / speedup / solo / inline('')."""
+    phase (#327) sets the HUD header: replay / speedup / solo / reconcile / inline('').
+    final (#327 single-HUD) marks the LAST emit of the whole fill — only then does
+    the HUD complete (✓) and auto-hide; intermediate stage-ends hand off instead."""
     try:
-        subprocess.run(
-            [sys.executable, str(card_py), "--board", str(board), "progress",
-             "--done", str(done), "--total", str(total), "--label", label,
-             "--phase", phase],
-            capture_output=True, text=True, timeout=4)
+        args = [sys.executable, str(card_py), "--board", str(board), "progress",
+                "--done", str(done), "--total", str(total), "--label", label,
+                "--phase", phase]
+        if final:
+            args.append("--final")
+        subprocess.run(args, capture_output=True, text=True, timeout=4)
     except subprocess.SubprocessError:
         pass
 
@@ -57,13 +60,19 @@ def _banner_create(card_py: Path, board: Path, total_chunks: int,
 
 def _banner_update(card_py: Path, board: Path, num: int,
                    done: int, total: int, cards_so_far: int,
-                   phase: str = "", label_override: str | None = None) -> None:
+                   phase: str = "", label_override: str | None = None,
+                   final: bool = False) -> None:
     # The notes-column banner card is gone (num is None) — progress lives only
     # on the HUD now. #327 — label_override lets the tier-1→tier-2 handoff
     # replace the generic "chunk N/M" line with e.g. "day-1 replayed in 8s ▸▸".
+    # final=True only when this extraction stage is the LAST thing in the fill
+    # (no reconcile sweep to follow) — then the HUD completes here.
+    # The headline "N/M" now owns the chunk counter (#327 single-HUD, 1-based) —
+    # so the tail line no longer repeats a (differently-based) "chunk N/M"; it
+    # carries the complementary detail instead (cards emitted so far).
     _emit_progress(card_py, board, done, total,
-                   label_override or f"chunk {done}/{total} · {cards_so_far} cards emitted",
-                   phase)
+                   label_override or f"{cards_so_far} card(s) emitted so far",
+                   phase, final=final)
 
 
 def _banner_finish(card_py: Path, board: Path, num: int,

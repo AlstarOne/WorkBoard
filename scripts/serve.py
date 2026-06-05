@@ -588,13 +588,16 @@ class BoardHandler(BaseHTTPRequestHandler):
                     "total": int(p.get("total", 0)),
                     "label": str(p.get("label", ""))[:200],
                     "phase": str(p.get("phase", ""))[:40],
+                    "final": bool(p.get("final", False)),
                 }
                 # Cache so a new/reconnecting client gets the current HUD on
-                # connect; drop the cache once extraction is complete so a later
-                # refresh doesn't resurrect a finished HUD.
+                # connect; drop the cache only on the FINAL emit (#327 single-HUD)
+                # — an intermediate stage hitting 100% (replay/speedup handoff) is
+                # still "live", so it must keep replaying to reconnecting clients;
+                # only the true end clears it so a later refresh doesn't resurrect
+                # a finished HUD.
                 global _last_progress
-                _last_progress = None if (evt["total"] and
-                                          evt["done"] >= evt["total"]) else evt
+                _last_progress = None if evt["final"] else evt
                 broadcast("extract_progress", evt)
             except (ValueError, TypeError) as e:
                 self._send(400, json.dumps({"error": f"bad progress: {e}"}).encode())

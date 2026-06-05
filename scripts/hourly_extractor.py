@@ -662,9 +662,15 @@ def _extract_haiku(project: Path, board: Path, card_py: Path,
             if phase == "replay" and completed == len(chunks):
                 handoff = (f"day-1 replayed in {time.monotonic() - t0:.0f}s "
                            f"· speeding up ▸▸ backfilling older history")
+            # #327 single-HUD: the LAST chunk completes the HUD ONLY when nothing
+            # follows — i.e. no reconcile sweep AND this isn't the 'replay' tier
+            # (replay always hands off to 'speedup'). Otherwise it hands off and
+            # the HUD stays visible for the next stage (no flash/disappear).
+            is_final = (completed == len(chunks) and not reconcile
+                        and phase != "replay")
             _banner_update(card_py, board, banner_num,
                            completed, len(chunks), n_cards,
-                           phase=phase, label_override=handoff)
+                           phase=phase, label_override=handoff, final=is_final)
 
     # Save snapshot of post-extraction state BEFORE reconciliation, so
     # offline recon testing can iterate against a stable baseline.
@@ -749,10 +755,13 @@ def run(project: Path, board: Path, port: int, days: int,
         _run_snapshot_load(board, card_py, snapshot_load, reconcile)
         return
 
+    # NB: reconcile is NOT in `common` — it's passed per-window so the two-tier
+    # fly reconciles exactly ONCE (after the LAST tier), not after every tier.
+    # A per-tier reconcile is what made the HUD complete+hide then reappear.
     common = dict(sources=sources, date_filter=date_filter,
                   bucket_min=bucket_min, recent_first=recent_first,
                   max_buckets=max_buckets, chunk_size=chunk_size,
-                  workers=workers, reconcile=reconcile, mode=mode)
+                  workers=workers, mode=mode)
 
     # #327 — TWO-TIER FLY (one source of truth; serve_bootstrap AND install.sh
     # --harvest both pass --tier-fly). Haiku + multi-day → run the WATCHED
@@ -774,23 +783,26 @@ def run(project: Path, board: Path, port: int, days: int,
                   f"cover {days}d of work ending then (not an empty recent gap)",
                   file=sys.stderr)
         if days > 1:
+            # Tier-1 'replay' NEVER reconciles (it hands off to 'speedup'); only
+            # the final 'speedup' tier runs the single reconcile sweep.
             _run_window(project, board, card_py, days=off + 1, end_days_ago=off,
                         show_lifecycle=True, pace_s=pace_s, phase="replay",
-                        seed_if_empty=seed_if_empty, **common)
+                        seed_if_empty=seed_if_empty, reconcile=False, **common)
             _run_window(project, board, card_py, days=off + days,
                         end_days_ago=off + 1,
                         show_lifecycle=True, pace_s=max(pace_s / 5, 0.0),
-                        phase="speedup", seed_if_empty=False, **common)
+                        phase="speedup", seed_if_empty=False,
+                        reconcile=reconcile, **common)
         else:
             _run_window(project, board, card_py, days=off + 1, end_days_ago=off,
                         show_lifecycle=True, pace_s=pace_s, phase="solo",
-                        seed_if_empty=seed_if_empty, **common)
+                        seed_if_empty=seed_if_empty, reconcile=reconcile, **common)
         return
 
     # Single pass — inline staging, or an explicit non-tier haiku run.
     _run_window(project, board, card_py, days=days, end_days_ago=end_days_ago,
                 show_lifecycle=show_lifecycle, pace_s=pace_s, phase=phase,
-                seed_if_empty=seed_if_empty, **common)
+                seed_if_empty=seed_if_empty, reconcile=reconcile, **common)
 
 
 # Calibrated wall-time of one haiku extraction call (chunk), thinking OFF

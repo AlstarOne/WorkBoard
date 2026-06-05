@@ -9,6 +9,31 @@ uses date-stamped pre-1.0 development entries until the first tagged release.
 
 Pre-release hardening toward `v1.0.0-rc.1`. Built across Plan v2 phases 0–6.
 
+### 0.9.11 — Single coherent BOARD-LOAD HUD (#78, 2026-06-05)
+- **One HUD across all three fill stages, no race.** The bootstrap fly-in HUD used
+  to **complete + auto-hide then reappear** between stages — because the reconcile
+  sweep ran at the end of **every** tier (`replay` AND `speedup` both got
+  `reconcile=True` from the shared `common` dict), and each reconcile hitting
+  `done>=total` made the frontend flash "✓ COMPLETE" and start its 6s hide timer,
+  only for the next tier to re-show it. Now reconcile runs **exactly once**, after
+  the final tier (`replay` tier → `reconcile=False`), and the HUD flows
+  `replaying last 24h → speeding up ▸▸ → reconciling → ✓ COMPLETE` as a single
+  persistent panel that never disappears mid-flow.
+- **Completion is backend-driven, not guessed.** A new `final` flag on the
+  `card.py progress` payload (plumbed through `serve.py`, `_emit_progress`,
+  `_banner_update`, and the reconcile terminal emits) marks the genuine end —
+  only that triggers `done()`. Intermediate stage-ends `handoff()` instead
+  (stay visible, advance the header). `serve.py` now drops the replay-cache on
+  `final` (not on `done>=total`), so a reconnecting client still sees an
+  in-progress 100% handoff.
+- **Count is 1-based — starts at 1/N, ends at N/N.** The readout used to start at
+  `0/N` and freeze at `N-1/N` (the "ends at 6/7, never 7/7" bug) because
+  `handoff()`/`done()` set the bar to 100% but never wrote the count. Now the
+  headline shows the 1-based current item (`min(done+1,total)`) and `handoff`/`done`
+  write `N/N`; the tail no longer repeats a differently-based "chunk N/M".
+- Browser-verified end-to-end (`dev/test_hud_single.py`, 16 checks via a real
+  server + real EventSource + chromium).
+
 ### 0.9.10 — Subagent card-tracking mode dial (2026-06-05)
 - **Stop auto-carding every sub-agent as a top-level card (#79)** — the subagent
   hooks previously created one top-level card per spawned agent, which polluted the

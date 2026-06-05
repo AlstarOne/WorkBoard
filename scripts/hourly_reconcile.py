@@ -317,7 +317,8 @@ def reconcile_sweep(card_py: Path, board: Path, events: list[dict],
     if not moves:
         print("  recon: 0 moves", file=sys.stderr)
         _emit_progress(card_py, board, 1, 1,
-                       "✓ already up to date — nothing to move", "reconcile")
+                       "✓ already up to date — nothing to move", "reconcile",
+                       final=True)
         return 0
 
     n_moved = 0
@@ -350,7 +351,8 @@ def reconcile_sweep(card_py: Path, board: Path, events: list[dict],
                   file=sys.stderr)
     print(f"  recon: {n_moved} card(s) moved", file=sys.stderr)
     _emit_progress(card_py, board, 1, 1,
-                   f"✓ {n_moved} card(s) brought up to date", "reconcile")
+                   f"✓ {n_moved} card(s) brought up to date", "reconcile",
+                   final=True)
     return n_moved
 
 

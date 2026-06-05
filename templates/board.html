@@ -5108,8 +5108,12 @@ function renderColumn(col, cards) {
     hide(){ const h = el(); h.style.display = 'none'; return HUD; },
     update(done, total, label, phase){
       const h = el(); h.classList.remove('lh-done'); h.style.display = '';
-      const pct = total ? Math.round(done/total*100) : 0;
-      h.querySelector('#lh-done').textContent = String(done).padStart(String(total||0).length, '0');
+      // #327 single-HUD: 1-based "current item". `done` is chunks COMPLETED, so
+      // the one in flight is done+1 → the readout starts at 1/N (not 0/N) and
+      // reaches N/N at the last chunk (fixes the "ends at 6/7, never 7/7" bug).
+      const cur = total ? Math.min(done + 1, total) : 0;
+      const pct = total ? Math.round(cur/total*100) : 0;
+      h.querySelector('#lh-done').textContent = String(cur).padStart(String(total||0).length, '0');
       h.querySelector('#lh-total').textContent = total;
       h.querySelector('#lh-fill').style.transform = 'scaleX('+(pct/100)+')';
       h.querySelector('#lh-pct').textContent = pct+'%';
@@ -5122,21 +5126,29 @@ function renderColumn(col, cards) {
       if (label) { h.querySelector('#lh-window').textContent = label; h.querySelector('#lh-tail').textContent = '✓ '+label; }
       return HUD;
     },
-    // #327 — tier-1 ('replay') ended but tier-2 is still coming. Don't flash
-    // "✓ COMPLETE" + auto-hide (that pre-flood flash is the "feels buggy"); show
-    // the "day-1 replayed in Xs · speeding up" handoff and stay visible.
-    handoff(label){
+    // #327 single-HUD — a stage finished but the WHOLE fill isn't over
+    // (replay → speedup → reconcile). Stay visible at 100% N/N and advance the
+    // header to `nextPhase`; do NOT flash "✓ COMPLETE" or auto-hide. This is the
+    // ONE HUD flowing through its stages — only done() (the `final` emit) ends it.
+    handoff(label, nextPhase){
       const h = el(); h.classList.remove('lh-done'); h.style.display = '';
+      const total = h.querySelector('#lh-total').textContent;
+      if (total) h.querySelector('#lh-done').textContent =
+        String(total).padStart(String(total).length, '0');   // show N/N, not N-1/N
       h.querySelector('#lh-fill').style.transform = 'scaleX(1)';
       h.querySelector('#lh-pct').textContent = '100%';
-      const mode = h.querySelector('#lh-mode'); if (mode) mode.textContent = _lhHeader('speedup');
-      const sb = h.querySelector('.lh-status b'); if (sb) sb.innerHTML = '▶ SPEEDING UP<span class="lh-cur">▋</span>';
-      h.querySelector('#lh-window').textContent = label || 'speeding up ▸▸';
+      const np = nextPhase || 'speedup';
+      const mode = h.querySelector('#lh-mode'); if (mode) mode.textContent = _lhHeader(np);
+      const verb = np === 'reconcile' ? '▶ RECONCILING' : '▶ SPEEDING UP';
+      const sb = h.querySelector('.lh-status b'); if (sb) sb.innerHTML = verb + '<span class="lh-cur">▋</span>';
+      h.querySelector('#lh-window').textContent = label || (np === 'reconcile' ? 'reconciling ▸▸' : 'speeding up ▸▸');
       if (_hideTimer) { clearTimeout(_hideTimer); _hideTimer = null; }
       return HUD;
     },
     done(label){
       const h = el(); h.classList.add('lh-done'); h.style.display = '';
+      const total = h.querySelector('#lh-total').textContent;
+      if (total) h.querySelector('#lh-done').textContent = total;   // show N/N, not N-1/N
       h.querySelector('#lh-fill').style.transform = 'scaleX(1)';
       h.querySelector('#lh-pct').textContent = '100%';
       h.querySelector('.lh-status b').innerHTML = '✓ COMPLETE';
@@ -5664,14 +5676,22 @@ function startSSE() {
     try {
       const d = JSON.parse(e.data);
       if (!window.BoardLoadHUD) return;
-      if (d.total > 0 && d.done >= d.total) {
-        // #327 — 'replay' (tier-1) finishing isn't the end: hand off to the
-        // "speeding up" tier-2 instead of completing the HUD.
-        if (d.phase === 'replay') BoardLoadHUD.handoff(d.label);
+      // #327 single-HUD: completion is driven by the backend `final` flag, NOT by
+      // "done>=total" — a stage hitting 100% (replay/speedup/solo) is NOT the end,
+      // it hands off to the next stage on the SAME HUD (no flash/disappear/race).
+      if (d.final) {
+        BoardLoadHUD.done(d.label);
+        // #101 — fill fully done; let the last card writes apply, then run the
+        // one-time newest-on-top sort across all columns (self-guards to once).
+        setTimeout(sortAllColumnsOnceAfterFill, 600);
+      } else if (d.total > 0 && d.done >= d.total) {
+        // Stage reached 100% but isn't final → advance the header to the next
+        // stage and stay visible. replay→speedup, speedup/solo→reconcile.
+        if (d.phase === 'replay') BoardLoadHUD.handoff(d.label, 'speedup');
+        else if (d.phase === 'speedup' || d.phase === 'solo') BoardLoadHUD.handoff(d.label, 'reconcile');
         else {
+          // inline ('') / unknown terminal with no reconcile to follow — complete.
           BoardLoadHUD.done(d.label);
-          // #101 — fill fully done; let the last card writes apply, then run the
-          // one-time newest-on-top sort across all columns (self-guards to once).
           setTimeout(sortAllColumnsOnceAfterFill, 600);
         }
       } else BoardLoadHUD.update(d.done || 0, d.total || 0, d.label || '', d.phase || '');

@@ -211,7 +211,11 @@ def build_parser():
     ppr.add_argument("--total", type=int, required=True, help="total chunks staged")
     ppr.add_argument("--label", default=None, help="current chunk label (e.g. its time window)")
     ppr.add_argument("--phase", default="", help="fill stage for the HUD header "
-                     "(inline / replay / speedup / solo); '' = inline default")
+                     "(inline / replay / speedup / solo / reconcile); '' = inline default")
+    ppr.add_argument("--final", action="store_true",
+                     help="this is the LAST emit of the whole fill — the HUD "
+                          "completes (✓) and auto-hides; otherwise it stays visible "
+                          "and hands off to the next stage (#327 single-HUD).")
     ppr.set_defaults(fn=cmd_progress)
 
     # recover (3.5c) — list rolling backups or restore one
