@@ -33,3 +33,4 @@ board/recon_pending.json
 
 # board server runtime log
 .board-server.log
+.board-recon.log
