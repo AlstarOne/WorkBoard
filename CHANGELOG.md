@@ -9,6 +9,15 @@ uses date-stamped pre-1.0 development entries until the first tagged release.
 
 Pre-release hardening toward `v1.0.0-rc.1`. Built across Plan v2 phases 0–6.
 
+### 0.9.9 — Stop-backstop false-positive fix (2026-06-05)
+- **Two false-positive classes killed (#78, `<this commit>`)** — the blocking
+  un-carded backstop no longer fires on (1) turns that only edit files **outside**
+  the board project (e.g. `~/.claude` memory files, another repo) — edits are now
+  scoped to `project_root`; or (2) the **cross-turn** carding pattern (`fly inprogress`
+  in turn N, edits in N+1, `fly done` in N+2) — an existing In-Progress card now counts
+  as the unit being declared, so the edit-heavy middle turn isn't blocked. Genuine
+  misses (in-project edits, no `card.py`, no rev bump, nothing in flight) still block.
+
 ### 0.9.8 — LIVE-protocol de-dilution + live-carding enforcement (2026-06-05)
 - **SKILL.md LIVE section de-diluted (#73, `7317709`)** — replaced the generic
   7-step `add→fly` list with **three laws** (declare-don't-record · one-pulse-at-a-
