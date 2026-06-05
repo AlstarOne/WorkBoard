@@ -9,6 +9,23 @@ uses date-stamped pre-1.0 development entries until the first tagged release.
 
 Pre-release hardening toward `v1.0.0-rc.1`. Built across Plan v2 phases 0–6.
 
+### 0.9.13 — Bootstrap reconcile: kill premature COMPLETE + recon race; number-free reconcile HUD (2026-06-05)
+- **No premature "✓ COMPLETE".** The tier-fly speedup/solo tier wrongly set
+  `is_final=True` (recon runs outside the window, so it was called `reconcile=False`),
+  flashing COMPLETE + auto-hide before the end-of-replay sweep re-showed the HUD. New
+  `will_reconcile` threaded `_run_window → _extract_haiku` makes the last tier hand off
+  to RECONCILING on the same HUD.
+- **Exactly one reconcile (race killed).** `_mark_replay_complete()` flipped the replay
+  gate *before* the sweep, letting a SessionStart `--reconcile-only` race it; nothing
+  serialized recon. Now: reconcile FIRST then flip the gate (gate stays closed for the
+  sweep → recon-only stands down), plus new `_boardio.recon_lock` (bail-if-held flock on
+  `board/.recon.lock` → any second concurrent reconcile skips). Fixes the
+  "already up to date → cards shuffle → N up to date, twice" report.
+- **Number-free reconcile HUD.** Reconcile is one LLM sweep, not N chunks, so its N/M +
+  % counter was meaningless and laggy (stale `8/8` then `1/1`). Hidden via a `.lh-recon`
+  class during `phase=='reconcile'`; the bar + blinking `▶ RECONCILING` still convey
+  activity. Browser test +3 assertions → 20 checks.
+
 ### 0.9.12 — Lean HUD: drop the tail line, shorten reconcile copy (#78, 2026-06-05)
 - **Removed the redundant bottom tail line** (`#lh-tail`, e.g. "✓ chunk 2/7") from
   **every** HUD state — it duplicated the window line and showed a differently-based
