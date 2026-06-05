@@ -1559,6 +1559,7 @@
   <span class="sp"></span>
   <button id="reset-cols-btn" class="header-pill" style="display:none" title="Restore default column order: Task → Backlog → In Progress → Done → Notes, then others by recency">↺ Reset columns</button>
   <button id="tags-btn" class="header-pill" style="display:none" title="Show all tags used on this board">🏷 Tags <span id="tags-count">0</span></button>
+  <button id="sort-time-btn" class="header-pill" style="display:none" title="Reorder every card by time (newest first) — one glide animation, no commands">⇅ Sort by time</button>
   <span class="view-toggle" id="view-toggle" style="display:none">
     <button data-view="board" class="active">Board</button>
     <button data-view="calendar">Calendar</button>
@@ -2136,6 +2137,21 @@ function flipPlayCards(oldRects, opts) {
     );
   });
 }
+
+// #91 — one-click reorder: re-sort ALL cards by time (newest first) and FLIP-glide
+// every displaced card into place in a SINGLE re-render. Pure client-side — no
+// per-card card.py moves, so it costs zero tokens. Persists the new order via
+// scheduleSave(). (Cards already in order simply don't move.)
+function flipResort() {
+  if (!state || !Array.isArray(state.cards)) return;
+  const rects = captureCardRects();   // FLIP "first": every card's current position
+  // Newest-first by createdAt — matches _cardSortTs + the Done-column render order.
+  state.cards.sort((a, b) => _cardSortTs(b) - _cardSortTs(a) || (b.num || 0) - (a.num || 0));
+  scheduleSave();                     // persist the order so it survives reloads
+  render();                           // FLIP "last": new positions
+  requestAnimationFrame(() => flipPlayCards(rects, { duration: 700 }));  // "play": glide
+}
+window.flipResort = flipResort;       // also callable from console for a quick demo
 
 function reorderColumn(srcId, targetId) {
   if (!state) return;
@@ -3551,6 +3567,8 @@ function enterApp() {
   $('#setup').style.display = 'none';
   $('#view-toggle').style.display = '';
   $('#tags-btn').style.display = '';
+  const sortBtn = $('#sort-time-btn');
+  if (sortBtn) { sortBtn.style.display = ''; sortBtn.onclick = flipResort; }
   const resetBtn = $('#reset-cols-btn');
   if (resetBtn) {
     resetBtn.style.display = '';
