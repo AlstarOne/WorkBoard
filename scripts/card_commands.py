@@ -324,6 +324,8 @@ def cmd_fly(args, d, board):
 
     # The hop + done-semantics: cycle-history (#188) and bug-tag auto-strip.
     c["column"] = args.column
+    if args.column == "super-urgent":   # #104 — ensure the urgent column exists (fly/reconcile target)
+        _ensure_super_urgent_col(d)
     if args.column == "done":
         c["doneAt"] = c.get("doneAt") or ts
         if "bug" in (c.get("tags") or []):
@@ -1010,7 +1012,7 @@ def cmd_repair_links(args, d, board):
 # `gh release create`, `npm publish`, marketing send, DNS go-live. Claude calls
 # this before launch-shaped actions; SessionStart hook also injects a count.
 
-_LAUNCH_BLOCKING_COLS = ("super-urgent", "mandatory")
+_LAUNCH_BLOCKING_COLS = ("super-urgent",)   # #104 — mandatory retired; super-urgent is the one urgent column
 _LAUNCH_BLOCKING_PRIOS = ("critical", "mid")
 
 
@@ -1089,7 +1091,7 @@ def cmd_list(args, d, board):
 # `list` stays the human-readable text view; `query` is its JSON sibling so an
 # agent pulls exactly the columns it needs without paying for notes/writeups.
 
-_DIGEST_ORDER = ["super-urgent", "mandatory", "ideas", "task",
+_DIGEST_ORDER = ["super-urgent", "ideas", "task",
                  "backlog", "inprogress", "blocked", "done"]
 
 
@@ -1129,8 +1131,8 @@ def cmd_digest(args, d, board):
 
     blocking = sum(
         1 for c in cards
-        if c.get("column") in ("super-urgent", "mandatory")
-        and (c.get("priority") or "low") in ("critical", "mid")
+        if c.get("column") in _LAUNCH_BLOCKING_COLS
+        and (c.get("priority") or "low") in _LAUNCH_BLOCKING_PRIOS
     )
 
     if getattr(args, "json", False):

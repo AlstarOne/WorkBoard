@@ -170,7 +170,7 @@ Output: a JSON ARRAY of card objects. Each card:
 {
   "title": "verb + noun phrase, ≤70 chars. CLEAN — do NOT prefix with the code (the code renders as its own badge). Examples: 'Atomic-hop primitive for card moves', 'Fix card-drag freeze on iPhone', 'Investigate convo dedup'. NO conversational openers (btw, can u, oh wait). NO verbatim user wording — summarize the WORK.",
   "code": "short CAPS badge from the noun cluster, ≤24 chars (e.g. 'BOARD-FLY', 'DISCOVER2', 'SIM-60D'). Assign one ONLY when the work has a distinct, reusable NAMED subject — a feature, system, or named fix you'd reference again (roughly half of cards earn one). Leave it EMPTY for routine one-off fixes, chores, tweaks, investigations, or observations with no nameable subject. A code means 'this is a thing with a name', not 'something happened'.",
-  "column": "one of: task | backlog | inprogress | done | mandatory | notes",
+  "column": "one of: task | backlog | inprogress | done | super-urgent | notes",
   "priority": "low | mid | critical",
   "origin": "WHY this work exists — the user's goal or the trigger, in their voice/intent (not yours). ≤200 chars. e.g. 'User wanted card-drag to work on iPhone where the columns stack vertically and the old handler froze.' This is the 'why this exists' a teammate reads to understand the card at a glance. Empty string only if genuinely unknowable.",
   "notes": "What the work actually was: problem → approach → outcome (or current state). 1-3 sentences, ≤300 chars. Concrete — name the file/function/command. If a COMMIT line (a sha) for this work appears in the bucket log, ALWAYS cite its short sha, e.g. 'Shipped in 7b565ff.' For UNFINISHED work, state what's left. Empty string only if no signal.",
@@ -180,7 +180,7 @@ Output: a JSON ARRAY of card objects. Each card:
 
 Column routing rules:
 - "done"       → a git commit landed in this hour OR a clean ship phrase appeared (shipped X / deployed / merged)
-- "mandatory"  → user said urgent / must / impt / critical / asap / blocker / 'this is impt'
+- "super-urgent" → user said urgent / must / impt / critical / asap / blocker / 'this is impt'
 - "inprogress" → files were edited but no ship hit
 - "task"       → mentioned, named, planned but no edits yet
 - "backlog"    → deferred / open / undone: user said "later" / "next session" / "tomorrow" / "defer" / "pending" / "we'll revisit" / "nvm save it", OR the work was started but explicitly NOT finished

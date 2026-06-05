@@ -16,7 +16,7 @@ import datetime
 import html as _html
 
 # Canonical left-to-right column order for grouping (mirrors card.py).
-_ORDER = ["super-urgent", "mandatory", "ideas", "task",
+_ORDER = ["super-urgent", "ideas", "task",
           "backlog", "inprogress", "blocked", "done"]
 
 

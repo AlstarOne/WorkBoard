@@ -332,9 +332,9 @@ def build_parser():
                      help="max recently-shipped cards to lead with (default 20)")
     pex.set_defaults(fn=cmd_export)
 
-    # prelaunch-check (#91) — exit 9 if any super-urgent/mandatory items open
+    # prelaunch-check (#91) — exit 9 if any super-urgent items open
     ppl = sub.add_parser("prelaunch-check",
-                         help="exit 9 if any super-urgent/mandatory cards still open. "
+                         help="exit 9 if any super-urgent cards still open. "
                               "Run BEFORE any public-facing ship (gh release, npm publish, "
                               "DNS go-live, repo flip private→public).")
     ppl.add_argument("--json", action="store_true", help="emit JSON instead of human text")

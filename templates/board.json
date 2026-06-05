@@ -37,8 +37,8 @@
       "stackUnder": null
     },
     {
-      "id": "mandatory",
-      "name": "📌 MANDATORY",
+      "id": "super-urgent",
+      "name": "🚨 SUPER URGENT",
       "kind": "todo",
       "stackUnder": null
     },
@@ -46,7 +46,7 @@
       "id": "discarded",
       "name": "Discarded",
       "kind": "custom",
-      "stackUnder": "mandatory"
+      "stackUnder": "super-urgent"
     },
     {
       "id": "done",

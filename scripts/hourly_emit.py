@@ -96,7 +96,7 @@ def _card_add(card_py: Path, board: Path, card: dict) -> int | None:
         title = title[len(code):].lstrip(" :—-").strip() or title
     column = card.get("column") or "task"
     if column not in ("task", "backlog", "inprogress", "done",
-                      "mandatory", "notes"):
+                      "super-urgent", "notes"):
         column = "task"
     priority = card.get("priority") or "mid"
     if priority not in ("low", "mid", "critical"):

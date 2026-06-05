@@ -32,7 +32,7 @@ After that: the chronological activity log from the same time window.
 For each card, decide its TRUE STATUS based on whether the user (in the activity log) later:
 - Said "skip", "nvm", "don't do that", "we won't ship this", "defer", "later" → MOVE to backlog
 - Said "done", "we shipped it", or there is a commit/ship hit matching the card's noun cluster → MOVE to done
-- Said "urgent", "must", "this is impt", "critical", "asap", "p0", "p1", "blocker" → MOVE to mandatory
+- Said "urgent", "must", "this is impt", "critical", "asap", "p0", "p1", "blocker" → MOVE to super-urgent
 - No clear later signal AND card matches active work → STAY
 - Sat untouched > 24h with no follow-up → MOVE to backlog (stale)
 
@@ -218,14 +218,14 @@ def _emit_extraction_pending(board: Path, card_py: Path,
             "where N = the number of chunks below; then AFTER finishing each chunk run "
             "`python3 <card_py> --board <board> progress --done <k> --total <N> --label \"<that chunk's bucket_ts_iso window>\"`. "
             "It's best-effort (no-op if no live server) — never skip a card to do it.\n"
-            "COMPLETENESS SWEEP (never miss a point — priority mandatory > notes > backlog): "
+            "COMPLETENESS SWEEP (never miss a point — priority super-urgent > notes > backlog): "
             "after emitting, re-scan EVERY digest for the categories with NO commit "
             "marker that a ship-oriented read drops — (1) urgency the user voiced "
-            "('this is impt'/must/urgent/asap/p0/blocker) → a 'mandatory' card; "
+            "('this is impt'/must/urgent/asap/p0/blocker) → a 'super-urgent' card; "
             "(2) a decision/rationale/observation → a 'notes' card; (3) deferrals "
             "('later'/'next session'/'defer'/'nvm save it') → a 'backlog' card with a "
             "'⏸ OPEN — <what remains>' note. Add any that didn't already become a card; "
-            "mandatory first. ONLY DELETE this file AFTER both the per-chunk emit AND the "
+            "super-urgent first. ONLY DELETE this file AFTER both the per-chunk emit AND the "
             "completeness sweep above are done — a leftover file is the session-start signal "
             "(#315) that the sweep was skipped, so deleting it early defeats the guard."
         ),
@@ -341,7 +341,7 @@ def reconcile_sweep(card_py: Path, board: Path, events: list[dict],
             target = m.get("target")
             reason = (m.get("reason") or "")[:160]
             if not isinstance(num, int) or target not in (
-                    "task", "backlog", "inprogress", "done", "mandatory"):
+                    "task", "backlog", "inprogress", "done", "super-urgent"):
                 continue
             # Find current column
             cur = next((c for c in candidates if c["num"] == num), None)

@@ -138,8 +138,8 @@ def _classify_column(real_ship: bool, urgency: list, defer: list, bugs: list,
     rule), matching the original inline chain exactly."""
     if real_ship:
         return "done"
-    if urgency:                            # urgency-language → mandatory
-        return "mandatory"
+    if urgency:                            # urgency-language → super-urgent
+        return "super-urgent"
     if defer:
         return "backlog"
     if age_days <= 2 and has_files:
@@ -223,7 +223,7 @@ def _task_to_card_args(task: dict) -> list[str] | None:
     if bugs: tags.append("bug")
     if defer: tags.append("deferred")
     if real_ship: tags.append("shipped")
-    if urgency: tags.append("mandatory")
+    if urgency: tags.append("urgent")
 
     ended = (task.get("ts_end") or "")[:10]
     sid = (task.get("sessionId") or "")[:8]

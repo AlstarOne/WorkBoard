@@ -3601,8 +3601,8 @@ async function resetColumnsToDefault() {
     { key:'ideas',      stack:'notes',     match:c => c.id==='ideas'      || /ideas$/i.test(c.name||'') },
     { key:'backlog',    stack:null,        match:c => c.id==='backlog'    || /^backlog$/i.test(c.name||'') },
     { key:'inprogress', stack:null,        match:c => c.id==='inprogress' || /^in\s*progress$/i.test(c.name||'') },
-    { key:'mandatory',  stack:null,        match:c => c.id==='mandatory'  || /mandatory$/i.test(c.name||'') },
-    { key:'discarded',  stack:'mandatory', match:c => c.id==='discarded'  || /^discarded$/i.test(c.name||'') },
+    { key:'super-urgent', stack:null,           match:c => c.id==='super-urgent' || /super.?urgent$/i.test(c.name||'') || c.id==='mandatory' || /mandatory$/i.test(c.name||'') },
+    { key:'discarded',    stack:'super-urgent', match:c => c.id==='discarded'    || /^discarded$/i.test(c.name||'') },
     { key:'done',       stack:null,        match:c => c.id==='done'       || /^done$/i.test(c.name||'') },
   ];
   const cols = state.columns.map(c => ({ ...c, stackUnder: null }));
