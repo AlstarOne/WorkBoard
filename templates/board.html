@@ -1538,15 +1538,9 @@
   @keyframes lh-pulse{50%{opacity:0.35;}}
   #load-hud.lh-done .lh-fill{background:linear-gradient(90deg,#0f0,#7dff7d);}
   #load-hud.lh-done #load-hud-head{color:#0f0;}
-  /* Reconcile is one LLM sweep with no progress fraction → show an INDETERMINATE
-     "loading" bar: a ~35% segment sweeping across while it runs (transform:none
-     beats the base scaleX(0); left is animated). On completion (.lh-done) this
-     rule stops matching → the bar reverts to a full scaleX(1) "loaded" state. */
-  #load-hud.lh-recon:not(.lh-done) .lh-fill{right:auto;width:35%;transition:none;transform:none;}
-  @media (prefers-reduced-motion: no-preference){
-    #load-hud.lh-recon:not(.lh-done) .lh-fill{animation:lh-indeterminate 1.15s ease-in-out infinite;}
-  }
-  @keyframes lh-indeterminate{0%{left:-40%;}100%{left:100%;}}
+  /* Reconcile uses a plain determinate fill: EMPTY at start (0/1) → FULL on
+     completion (the bar still drains-then-fills as its own phase). Numbers are
+     hidden (just the bar) via the .lh-recon rule below. */
   /* Reconcile has no meaningful item count (it's a single LLM sweep, not N chunks)
      — so during the 'reconcile' phase hide the N/M counter + the % readout. They
      only ever showed a stale '8/8' lag then a meaningless '1/1'. The bar + the
@@ -5122,17 +5116,16 @@ function renderColumn(col, cards) {
     update(done, total, label, phase){
       const h = el(); h.classList.remove('lh-done'); h.style.display = '';
       const isRecon = phase === 'reconcile';
-      h.classList.toggle('lh-recon', isRecon);  // indeterminate loading bar + hide N/M & %
-      // #327 single-HUD: 1-based "current item". `done` is chunks COMPLETED, so
-      // the one in flight is done+1 → the readout starts at 1/N (not 0/N) and
-      // reaches N/N at the last chunk (fixes the "ends at 6/7, never 7/7" bug).
-      const cur = total ? Math.min(done + 1, total) : 0;
+      h.classList.toggle('lh-recon', isRecon);  // hide N/M & % during reconcile (just the bar)
+      // Extraction is 1-based ("current item" in flight = done+1 → starts 1/N,
+      // reaches N/N at the last chunk). Reconcile is a plain 0→1 fill instead:
+      // raw `done` so it shows an EMPTY bar at the start (0/1) and only fills on
+      // completion — not the 1-based bump that snapped it straight to full.
+      const cur = isRecon ? done : (total ? Math.min(done + 1, total) : 0);
       const pct = total ? Math.round(cur/total*100) : 0;
       h.querySelector('#lh-done').textContent = String(cur).padStart(String(total||0).length, '0');
       h.querySelector('#lh-total').textContent = total;
-      // Reconcile has no real progress fraction → clear the inline scaleX so the
-      // CSS indeterminate sweep drives the bar; other phases show the real fill.
-      h.querySelector('#lh-fill').style.transform = isRecon ? '' : ('scaleX('+(pct/100)+')');
+      h.querySelector('#lh-fill').style.transform = 'scaleX('+(pct/100)+')';
       h.querySelector('#lh-pct').textContent = pct+'%';
       const mode = h.querySelector('#lh-mode'); if (mode) mode.textContent = _lhHeader(phase);
       const sb = h.querySelector('.lh-status b');
@@ -5154,10 +5147,10 @@ function renderColumn(col, cards) {
       const total = h.querySelector('#lh-total').textContent;
       if (total) h.querySelector('#lh-done').textContent =
         String(total).padStart(String(total).length, '0');   // show N/N, not N-1/N
-      // → reconcile: clear inline scaleX so the CSS sweep starts immediately
-      // (no static-full flash); → speedup: snap the bar full as before.
-      h.querySelector('#lh-fill').style.transform = toRecon ? '' : 'scaleX(1)';
-      h.querySelector('#lh-pct').textContent = '100%';
+      // → reconcile: reset the bar to EMPTY (reconcile is its own 0→1 phase that
+      // fills on completion); → speedup: snap the bar full as before.
+      h.querySelector('#lh-fill').style.transform = toRecon ? 'scaleX(0)' : 'scaleX(1)';
+      h.querySelector('#lh-pct').textContent = toRecon ? '0%' : '100%';
       const np = nextPhase || 'speedup';
       const mode = h.querySelector('#lh-mode'); if (mode) mode.textContent = _lhHeader(np);
       const verb = np === 'reconcile' ? '▶ RECONCILING' : '▶ SPEEDING UP';
