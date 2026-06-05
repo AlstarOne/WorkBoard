@@ -9,6 +9,20 @@ uses date-stamped pre-1.0 development entries until the first tagged release.
 
 Pre-release hardening toward `v1.0.0-rc.1`. Built across Plan v2 phases 0–6.
 
+### 0.9.10 — Subagent card-tracking mode dial (2026-06-05)
+- **Stop auto-carding every sub-agent as a top-level card (#79)** — the subagent
+  hooks previously created one top-level card per spawned agent, which polluted the
+  board (5 orphan "Simulate …" cards from internal tooling agents). New **mode dial**
+  resolved per board (`BOARD_SUBAGENT_CARDS` env → `board.settings.subagentCards` →
+  default): **`off`** (no tracking) · **`subtask`** *(default)* — a sub-agent's work
+  becomes a **subtask of the active In-Progress card**, or **nothing** if none is in
+  flight (internal helpers stop polluting) · **`collab`** — opt-in for agent-to-agent
+  product builds: each sub-agent gets its **own child card linked to an epic**
+  (`settings.subagentEpic`), so the board mirrors the agent tree. Read-only types
+  (Explore/Plan) still never carded. Granularity rule added to SKILL.md ("a top-level
+  card is for USER-named work, not your mechanics"); dial documented in BOOTSTRAP.md.
+  Cleaned up the 5 orphan sim cards (#68–72).
+
 ### 0.9.9 — Stop-backstop false-positive fix (2026-06-05)
 - **Two false-positive classes killed (#78, `<this commit>`)** — the blocking
   un-carded backstop no longer fires on (1) turns that only edit files **outside**
