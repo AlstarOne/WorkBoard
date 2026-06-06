@@ -22,6 +22,13 @@ Full record: `docs/SESSION_LOG_260606.md`.
   multi-part card in IP"; `card.py fly` now blocks a multi-part-looking card with no
   subtasks on the task/backlog→IP hop (new `_looks_multipart` heuristic; override `--force`
   / `BOARD_SKIP_DECOMPOSE_CHECK=1`).
+- **Enforce phase-card model (#107, `3bffe57`).** A fresh-install test caught an agent
+  planning a phased project as 18 one-card-per-deliverable in Backlog. Adopted Option A +
+  graduation: SKILL.md shape 4 = **1 card per phase** (tagged `phase`, `Phase N — <goal>`)
+  in Task, deliverables as subtasks; phase cards never enter `inprogress` — the active
+  deliverable **graduates** into its own `--link`'d card. `card.py fly` blocks a phase card
+  from entering IP (hands the graduate command); `phase` is a structural tag bypassing
+  taxonomy. Pure-A (no graduation) kept as fallback (#110).
 - **Recon-gate try/finally (#384, `26d58fb`).** End-of-replay reconcile wrapped so the
   replay gate always reopens even if the sweep raises — prevents SessionStart recon from
   being permanently skipped on a board (regression from 23fdc02). Live-validated during

@@ -14,6 +14,8 @@ so we know *when we changed what*.
 | **#474** | Reshaped as a live example of the new law | Old card crammed parts in the title; now title=`Unify urgent column` + 3 subtasks | (board-only) | — |
 | **#476** | **Codified the multi-part carding LAW** in SKILL.md | Naming was discretionary → inconsistent across installs. Header test now decides shape | `2d037cf` | `SKILL.md` |
 | **#103** | **Enforce decompose-before-IP** (wording + guard) | Test #2 caught the agent flying a multi-part card to IP with 0 subtasks | `71fabac` | `SKILL.md`, `scripts/card.py`, `scripts/card_commands.py` |
+| **#107** | **Enforce phase-card model** (Option A + graduation guard) | Test #4 caught the agent making 18 deliverable-cards in Backlog instead of per-phase cards in Task | `3bffe57` | `SKILL.md`, `scripts/card_commands.py`, `scripts/card_state.py` |
+| **#110** | Filed Pure-A fallback (deliverables never graduate) | Backup if the graduation guard proves too noisy | (board-only) | — |
 
 ### The LAW (from #476, strengthened by #103)
 - **Header test:** one honest `verb + noun` header covers all parts → **1 card + N subtasks**; no single header → **N cards**.
@@ -36,8 +38,8 @@ so we know *when we changed what*.
 |---|---|---|---|---|
 | **1** | 1 task → 1 card | "Add a dark-mode toggle to the settings page." | ✅ **PASS** | 1 card, clean title. Test agent built a real dark-mode toggle → `templates/board.html` (+48 lines, **uncommitted** — see §4). |
 | **2** | many related → 1 card + subtasks | "Unify the urgent column: route reconcile…, retire mandatory, fix launch-block double-count." | ❌ **FAIL → fixed → re-test pending** | Agent flew #102 to IP with **0 subtasks** (parts lost, showed `1/1`). Fixed by **#103** (ordered procedure + guard). Cache refreshed; awaiting re-run. Test agent's urgent cleanup → 6 scripts (**uncommitted** — see §4). |
-| **3** | many unrelated → N cards | "Three separate things: fix auth redirect, add rate-limit header, update README." | ⏳ **IN PROGRESS** (user testing) | — |
-| **4** | phases → 1 card per phase | "Create a new workboard for an Edu platform and plan it end-to-end in phases." | ⬜ **NOT STARTED** | — |
+| **3** | many unrelated → N cards | "Three separate things: fix auth redirect, add rate-limit header, update README." | ⏸ **SKIPPED for now** | Deferred — would coincide with the #103 fix that needs a reinstall first. Re-test after next reinstall. |
+| **4** | phases → 1 card per phase | "Create a new workboard for an Edu platform and plan it end-to-end in phases." | ❌ **FAIL → fixed → re-test pending** | Agent made **18 deliverable-cards in Backlog** instead of per-phase cards in Task. Diagnosed (law shape 4 ambiguous + agent chose backlog; #103 guard only fires on fly-to-IP). Fixed by **#107** (Option A: phase=card+subtasks in Task, + phase-card graduation guard). EduPlatform board rebuilt into 6 phase cards in Task (old 18 discarded). |
 
 ---
 
