@@ -394,6 +394,35 @@ def cmd_fly(args, d, board):
             f"  • genuinely one atomic task → card.py fly {c['num']} inprogress --force"
         )
 
+    # #476 DONE-COMPLETENESS GUARD — don't let a card reach Done with unfinished
+    # subtasks (the "flew to Done at 1/4, forgot to tick the rest" miss). The
+    # done-hop below auto-closes lastTouchedSubtask, so exclude it; the auto
+    # '☑ initial ship' is only added when there are NO subtasks, so it's not
+    # here for a multi-part card. Override: --force (a deliberate partial
+    # "shipped X/N" ship) or BOARD_SKIP_DECOMPOSE_CHECK=1 (automation).
+    if (args.column == "done" and old != "done"
+            and not getattr(args, "force", False)
+            and os.environ.get("BOARD_SKIP_DECOMPOSE_CHECK") != "1"):
+        _last = c.get("lastTouchedSubtask")
+        def _open_leaves(nodes):
+            out = []
+            for s in nodes or []:
+                kids = s.get("children") or []
+                if kids:
+                    out += _open_leaves(kids)
+                elif not s.get("done") and s.get("id") != _last:
+                    out.append(s)
+            return out
+        _open = _open_leaves(c.get("subtasks"))
+        if _open:
+            _names = "; ".join((s.get("text") or "")[:34] for s in _open[:3])
+            sys.exit(
+                f"✋ #{c['num']} has {len(_open)} unfinished subtask(s) — finish before Done:\n"
+                f"    {_names}{' …' if len(_open) > 3 else ''}\n"
+                f"  • tick each as you go: card.py subtask done {c['num']} <sid>\n"
+                f"  • deliberately shipping partial (X/N)? card.py fly {c['num']} done --force"
+            )
+
     # The hop + done-semantics: cycle-history (#188) and bug-tag auto-strip.
     c["column"] = args.column
     if args.column == "super-urgent":   # #104 — ensure the urgent column exists (fly/reconcile target)

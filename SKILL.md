@@ -104,8 +104,13 @@ removed because it jumped. **No "want me to add a card?" prompt — just do it.*
 
 **Two layers of truth:** card **column = goal state** (is the high-level goal shipped); **subtasks
 = work-cycle history** (one open-then-closed subtask per ship/bug/improve cycle — `☑ initial ship`
-on first done, `🐞 fix bug: …` on each reopen). A Done card with open subtasks is a deliberate
-"shipped 1/5" — leave it. Cycle subtasks are first-class history forever.
+on first done, `🐞 fix bug: …` on each reopen). Cycle subtasks are first-class history forever.
+
+**ALL SUBTASKS DONE BEFORE `done` (#476).** Tick each part off the moment you finish it
+(`subtask done <n> <sid>`) — never narrate "done" and skip the tick. A card must read **`N/N`
+before it flies to `done`**; `card.py fly … done` **blocks** a card with unfinished subtasks
+(the "flew to Done at 1/4, forgot to tick the rest" miss). A genuinely partial ship (`shipped X/N`)
+is still allowed — but you must say so explicitly with `--force`, so it's deliberate, not forgotten.
 
 This is the zero-input headline behaviour from `VISION.md` §"The principle". Skip the lifecycle
 only for genuine non-tasks (a pure question, debug-this-snippet, explain-X) per the table below.
