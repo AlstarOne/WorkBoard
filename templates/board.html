@@ -1923,6 +1923,19 @@ async function refreshLogsCommit() {
 function _renderLogLine(entry) {
   const body = document.getElementById('logs-hud-body');
   if (!body) return;
+  // #505 — session boundary: a full-width grey rule with a centred label
+  // (`──── session refresh · HH:MM ────`), not a normal timestamp/kind line.
+  // Drawn from a session-divider SSE pulse so a fresh session is visually
+  // separated from the previous one's activity.
+  if (entry.kind === 'divider') {
+    const esc0 = s => String(s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+    const rule = document.createElement('div');
+    rule.style.cssText = 'color:#6f6a82;text-align:center;letter-spacing:1px;margin:4px 0;font-size:11px;white-space:nowrap;overflow:hidden;';
+    rule.innerHTML = `──────── ${esc0(entry.summary)} · ${entry.t.slice(0,5)} ────────`;
+    body.insertBefore(rule, body.firstChild);
+    while (body.childNodes.length > _LOGS_BUF_MAX) body.removeChild(body.lastChild);
+    return;
+  }
   const colorByKind = {
     'add':    '#9adb9a',
     'move':   '#7fb9ff',
@@ -5427,6 +5440,14 @@ function handleCardFlash({ id, num, title, file }) {
   }
 }
 
+// #505 — a fresh Claude Code session fired GET /divider (from the session-start
+// hook). Drop a persisted grey rule into the Logs HUD so this session's activity
+// is visually separated from the previous one's. logEvent persists it to the
+// rolling buffer (#493), so the boundary survives a refresh and replays in order.
+function handleSessionDivider({ label } = {}) {
+  if (typeof logEvent === 'function') logEvent('divider', label || 'session refresh');
+}
+
 function handleCardAdded({ card }) {
   if (!state) return;
   const existing = state.cards.find(c => c.id === card.id);
@@ -5841,6 +5862,7 @@ function startSSE() {
   _es.addEventListener('card-updated',   e => handleCardUpdated(JSON.parse(e.data)));
   _es.addEventListener('card-removed',   e => handleCardRemoved(JSON.parse(e.data)));
   _es.addEventListener('card-flash',     e => handleCardFlash(JSON.parse(e.data)));
+  _es.addEventListener('session-divider', e => handleSessionDivider(JSON.parse(e.data)));
   _es.addEventListener('column-added',   e => handleColumnAdded(JSON.parse(e.data)));
   _es.addEventListener('column-removed', e => handleColumnRemoved(JSON.parse(e.data)));
   _es.addEventListener('column-renamed', e => handleColumnRenamed(JSON.parse(e.data)));

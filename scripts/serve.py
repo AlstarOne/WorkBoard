@@ -416,6 +416,8 @@ class BoardHandler(BaseHTTPRequestHandler):
             self._handle_export(path)
         elif path == "/flash":
             self._handle_flash()
+        elif path == "/divider":
+            self._handle_divider()
         elif path == "/health":
             self._handle_health()
         elif path == "/tags":
@@ -510,6 +512,17 @@ class BoardHandler(BaseHTTPRequestHandler):
             "file": fpath,
         })
         self._send(200, json.dumps({"ok": True, "flashed": target.get("num")}).encode())
+
+    def _handle_divider(self):
+        """GET /divider — #505: broadcast a one-shot 'session boundary' marker to
+        the Logs HUD. No state mutation, no card — just a transient SSE pulse the
+        session-start hook fires so a fresh Claude Code session draws a grey
+        `──── session refresh · HH:MM ────` rule, separating its activity from the
+        previous session's. Optional ?label= overrides the default text."""
+        qs = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+        label = (qs.get("label") or ["session refresh"])[0]
+        broadcast("session-divider", {"label": label})
+        self._send(200, json.dumps({"ok": True}).encode())
 
     def _handle_health(self):
         """GET /health — liveness + board rev/cards + SSE client count +
