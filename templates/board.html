@@ -2562,14 +2562,15 @@ function commitCardDrag() {
       if (st && !st.done) { st.done = true; st.doneAt = ts; }
     }
   }
-  // #515 — group move: if the dragged card is part of a multi-selection, bring
-  // the rest of the selected cards into the same column with the same core
-  // semantics (column + doneAt + history + active-work + bug-strip). They keep
-  // their array order; the full render() below reconciles their DOM.
-  const _groupMove = _selected.size > 1 && _selected.has(card.id);
+  // #515 — group move: if the drag was started on a multi-selected card, bring
+  // the rest of the LOCKED-AT-DRAGSTART group into the same column with the same
+  // core semantics (column + doneAt + history + active-work + bug-strip). They
+  // keep their array order; the full render() below reconciles their DOM.
+  const _grp = (_cardDrag && _cardDrag.group) ? new Set(_cardDrag.group) : null;
+  const _groupMove = !!(_grp && _grp.has(card.id));
   if (_groupMove) {
     for (const oc of state.cards) {
-      if (!_selected.has(oc.id) || oc.id === card.id || oc.column === targetCol) continue;
+      if (!_grp.has(oc.id) || oc.id === card.id || oc.column === targetCol) continue;
       const from = oc.column;
       oc.column = targetCol;
       oc.updatedAt = now();
@@ -3303,6 +3304,11 @@ function renderCardCompact(card) {
       srcEl: el,
       hoverCol: card.column,
       hoverBeforeCardId: null,
+      // #515 fix — LOCK the multi-selection at drag start. Reading _selected at
+      // drop time was fragile: any click / re-render between dragstart and drop
+      // could clear it, leaving only the dragged card to move. Snapshotting here
+      // makes the group authoritative for the whole gesture.
+      group: (_selected.has(card.id) && _selected.size > 1) ? Array.from(_selected) : null,
     };
     // #119 — dim source column to signal "card is leaving here".
     const srcColEl = document.querySelector('.column[data-col="' + card.column + '"]');
@@ -3322,7 +3328,9 @@ function renderCardCompact(card) {
   el.addEventListener('click', e => {
     if (e.target.closest('.prio-chip, .num-ref')) return;
     // #515 — Shift-click toggles multi-selection instead of opening the card.
-    if (e.shiftKey) { e.preventDefault(); toggleSelect(card.id, el); return; }
+    // stopPropagation so the document-level "click empty space clears" handler
+    // can't fire on the same event and wipe the selection being built.
+    if (e.shiftKey) { e.preventDefault(); e.stopPropagation(); toggleSelect(card.id, el); return; }
     // A plain click on a card clears any selection, then opens it.
     if (_selected.size) clearSelection();
     openModal(card.id);
