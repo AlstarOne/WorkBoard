@@ -1733,6 +1733,32 @@ function dbg(msg) {
 const _LOGS_HUD_POS_KEY  = 'workboard.logsHudPos';
 const _LOGS_HUD_SIZE_KEY = 'workboard.logsHudSize';
 const _LOGS_HUD_MIN_KEY  = 'workboard.logsHudMin';
+// #493 — persist the Logs HUD tail across refreshes. Without this the lines live
+// only in the DOM and vanish on reload. Rolling buffer: last _LOGS_BUF_MAX
+// entries, anything older than the TTL pruned on load. The buffer is held IN
+// MEMORY (_logsBuf) and the localStorage write is debounced, so a burst of log
+// lines is O(1) per line, not a full parse+stringify+disk-write each time.
+const _LOGS_BUF_KEY    = 'workboard.logsBuf';
+const _LOGS_BUF_MAX    = 200;
+const _LOGS_BUF_TTL_MS = 7 * 24 * 60 * 60 * 1000;   // 7 days
+let _logsBuf = null;             // lazy-loaded in-memory cache (source of truth)
+let _logsBufSaveTimer = null;
+function _logsBufEnsure() {
+  if (_logsBuf) return _logsBuf;
+  let raw = [];
+  try { raw = JSON.parse(localStorage.getItem(_LOGS_BUF_KEY) || '[]'); } catch (e) {}
+  if (!Array.isArray(raw)) raw = [];
+  const cutoff = Date.now() - _LOGS_BUF_TTL_MS;
+  _logsBuf = raw.filter(e => e && Number.isFinite(e.ts) && e.ts >= cutoff).slice(-_LOGS_BUF_MAX);
+  return _logsBuf;
+}
+function _logsBufSaveSoon() {
+  if (_logsBufSaveTimer) return;
+  _logsBufSaveTimer = setTimeout(() => {
+    _logsBufSaveTimer = null;
+    try { localStorage.setItem(_LOGS_BUF_KEY, JSON.stringify(_logsBuf.slice(-_LOGS_BUF_MAX))); } catch (e) {}
+  }, 500);
+}
 let _logsClockTimer = null;
 let _logsCommitMeta = { sha: '', msg: '' };
 
@@ -1790,6 +1816,7 @@ function _logsHud() {
   body.style.cssText = 'padding:6px 10px 8px;overflow-y:auto;flex:1;min-height:60px;';
   hud.appendChild(body);
   document.body.appendChild(hud);
+  replayLogs();             // #493 — restore the persisted tail across refreshes
   _anchorHudTopLeft(hud);   // #492 — left/top anchored from the start so the resize handle grows normally
 
   // Draggable header (mirrors drag-hud pattern).
@@ -1923,11 +1950,11 @@ async function refreshLogsCommit() {
 // renders if the HUD is open (cheap check). Used by SSE handlers.
 // Optional `card` arg appends tag chips (currently just 🐞 bug) so the
 // log line carries the same context the user sees on the card itself.
-function logEvent(kind, summary, card) {
+// Render one buffered log entry into the HUD body (newest on top). Pure DOM —
+// no persistence — so it's reused by both live logging and #493 replay.
+function _renderLogLine(entry) {
   const body = document.getElementById('logs-hud-body');
   if (!body) return;
-  const line = document.createElement('div');
-  const t = new Date().toTimeString().slice(0,8);
   const colorByKind = {
     'add':    '#9adb9a',
     'move':   '#7fb9ff',
@@ -1935,15 +1962,38 @@ function logEvent(kind, summary, card) {
     'col':    '#FFD479',
     'sys':    '#a09ab8',
   };
-  const color = colorByKind[kind] || '#cfd6df';
+  const color = colorByKind[entry.kind] || '#cfd6df';
   const esc = s => String(s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
-  let tagSuffix = '';
-  if (card && (card.tags || []).includes('bug')) {
-    tagSuffix = ' <span style="color:#ff6b6b;font-weight:600;">[🐞 bug]</span>';
-  }
-  line.innerHTML = `<span style="color:#777;">${t}</span> <span style="color:${color};">${kind.toUpperCase().padEnd(6, ' ')}</span> ${esc(summary)}${tagSuffix}`;
+  const tagSuffix = entry.bug
+    ? ' <span style="color:#ff6b6b;font-weight:600;">[🐞 bug]</span>' : '';
+  const line = document.createElement('div');
+  line.innerHTML = `<span style="color:#777;">${entry.t}</span> <span style="color:${color};">${String(entry.kind).toUpperCase().padEnd(6, ' ')}</span> ${esc(entry.summary)}${tagSuffix}`;
   body.insertBefore(line, body.firstChild);
-  while (body.childNodes.length > 30) body.removeChild(body.lastChild);
+  while (body.childNodes.length > _LOGS_BUF_MAX) body.removeChild(body.lastChild);
+}
+
+// Replay the persisted tail into a freshly-created HUD body (#493). Oldest first
+// so insertBefore(firstChild) lands the newest on top, matching live order.
+function replayLogs() {
+  for (const entry of _logsBufEnsure()) _renderLogLine(entry);
+}
+
+// Append a single line to the Logs HUD tail. Safe to call always — only renders
+// if the HUD is open (cheap check). Used by SSE handlers. Optional `card` arg
+// appends tag chips (🐞 bug). #493 — also persisted to a rolling in-memory
+// buffer (debounced to localStorage) so the tail survives a refresh.
+function logEvent(kind, summary, card) {
+  const entry = {
+    ts: Date.now(),
+    t: new Date().toTimeString().slice(0,8),
+    kind, summary: String(summary),
+    bug: !!(card && (card.tags || []).includes('bug')),
+  };
+  const buf = _logsBufEnsure();
+  buf.push(entry);
+  if (buf.length > _LOGS_BUF_MAX) buf.splice(0, buf.length - _LOGS_BUF_MAX);
+  _logsBufSaveSoon();
+  _renderLogLine(entry);
 }
 document.addEventListener('DOMContentLoaded', () => {
   _dbgHud();
