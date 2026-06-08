@@ -19,6 +19,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 _CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
 _LLM_MODEL = os.environ.get("HOURLY_MODEL", "haiku")
 
+# #321 DROP-ASST-PROSE: in the 2-day jsonl-source analysis (260531), assistant
+# narration was 219K tok (~all redundant with git — commits encode the same ship
+# more precisely) on top of 0-prose tool-only noise. The user prompts (intent +
+# open items) and the per-event files[] (the "files touched" signal) carry the
+# card-building value. So drop the assistant PROSE head from each digest while
+# KEEPING the "CLAUDE edited: <files>" line. Default on; DIGEST_DROP_ASST=0
+# restores the legacy truncate-to-head behaviour for A/B token measurement.
+_DROP_ASST_PROSE = os.environ.get("DIGEST_DROP_ASST", "1") != "0"
+
 # Claude Code runs the model with EXTENDED THINKING on by default — for this
 # stateless digest→JSON extraction that burns ~5k reasoning tokens/call (stripped
 # from the output, so invisible) and dominates latency (~50s/call). Forcing
@@ -82,15 +91,17 @@ def build_digest(bucket_events: list[dict], project: Path,
             txt = (ev.get("text") or "").strip().replace("\n", " ")[:400]
             lines.append(f"  [{ts}] USER: {txt}")
         elif kind in ("asst_msg", "convo_asst"):
-            txt = (ev.get("text") or "").strip()
-            # Just the head — full asst replies are too long
-            head = txt.split("\n", 1)[0][:300]
+            # KEEP the files-touched signal (the WHAT-changed) regardless.
             files = ev.get("files") or []
             if files:
                 fnames = ", ".join(Path(f).name for f in files[:5])
                 lines.append(f"  [{ts}] CLAUDE edited: {fnames}")
-            if head:
-                lines.append(f"  [{ts}] CLAUDE: {head}")
+            # #321: drop the assistant prose head (redundant w/ git) by default;
+            # legacy path keeps just the truncated head.
+            if not _DROP_ASST_PROSE:
+                head = (ev.get("text") or "").strip().split("\n", 1)[0][:300]
+                if head:
+                    lines.append(f"  [{ts}] CLAUDE: {head}")
         elif kind == "git_commit":
             sha = (ev.get("meta") or {}).get("shaShort", "")
             lines.append(f"  [{ts}] COMMIT {sha}: {ev['text'][:120]}")
