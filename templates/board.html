@@ -1554,7 +1554,7 @@
     <span class="status" id="status" title="Connection status"><span class="dot"></span></span>
   </span>
   <span class="sp"></span>
-  <button id="reset-cols-btn" class="header-pill" style="display:none" title="Restore default layout: Task · Notes+Ideas · Backlog · In Progress · Mandatory+Discarded · Done (with stacks), then extras by recency">↺ Reset columns</button>
+  <button id="reset-cols-btn" class="header-pill" style="display:none" title="Restore default layout: Task · Notes+Ideas · Backlog · In Progress · Mandatory+Discarded · Done (with stacks), then extras by recency. Also snaps the Logs + recon HUDs back to their default positions.">↺ Reset columns</button>
   <button id="tags-btn" class="header-pill" style="display:none" title="Show all tags used on this board">🏷 Tags <span id="tags-count">0</span></button>
   <span class="view-toggle" id="view-toggle" style="display:none">
     <button data-view="board" class="active">Board</button>
@@ -3674,7 +3674,37 @@ async function resetColumnsToDefault() {
   scheduleSave();
   render();
   requestAnimationFrame(() => flipPlayColumns(old));
-  toast('Columns reset — ' + undoHint() + ' to undo', 3200);
+  resetHudsToDefault();   // #488 — also snap the floating HUDs back to default
+  toast('Columns + HUDs reset — ' + undoHint() + ' to undo', 3200);
+}
+
+// #488 — restore the floating HUDs (Logs + recon/load) to their default
+// positions/sizes, clearing the saved localStorage so a later reload also
+// opens them at default. Live elements are repositioned immediately; each may
+// be absent (the load HUD only exists during a sync) so guard with if.
+function resetHudsToDefault() {
+  // Logs HUD → default: bottom-right, 340×240, un-minimized.
+  try {
+    localStorage.removeItem(_LOGS_HUD_POS_KEY);
+    localStorage.removeItem(_LOGS_HUD_SIZE_KEY);
+    localStorage.removeItem(_LOGS_HUD_MIN_KEY);
+  } catch (e) {}
+  const lh = document.getElementById('logs-hud');
+  if (lh) {
+    lh.dataset.minimized = '0';
+    const body = document.getElementById('logs-hud-body'); if (body) body.style.display = '';
+    const mb = document.getElementById('logs-min-btn'); if (mb) { mb.textContent = '▾'; mb.title = 'Minimize'; }
+    lh.style.left = ''; lh.style.top = '';
+    lh.style.right = '12px'; lh.style.bottom = '12px';
+    lh.style.width = '340px'; lh.style.height = '240px'; lh.style.resize = 'both';
+  }
+  // Recon / load HUD → default: top-right (top:110px, right:12px).
+  try { localStorage.removeItem('workboard.loadHudPos'); } catch (e) {}
+  const rh = document.getElementById('load-hud');
+  if (rh) {
+    rh.style.left = ''; rh.style.bottom = '';
+    rh.style.top = '110px'; rh.style.right = '12px';
+  }
 }
 
 // Read project name from board.json `title` field. Falls back gracefully.
