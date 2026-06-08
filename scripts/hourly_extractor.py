@@ -161,10 +161,12 @@ def _flatten_events(project: Path, days: int,
     return out
 
 
-# Ancestors of (nearly) every project — $HOME, ~/Desktop, the FS roots. A
-# session run from one of these must NOT count as "in" a project below it, or
-# every home session leaks into every board (the Edu-on-WorkBoard bug #508).
-_BROAD_ROOTS = {Path.home(), Path.home() / "Desktop", Path("/"), Path("/Users")}
+# Ancestors of (nearly) every project — $HOME, the users-root, ~/Desktop, the FS
+# root. A session run from one of these must NOT count as "in" a project below
+# it, or every home session leaks into every board (the Edu-on-WorkBoard bug
+# #508). #530: Path.home().parent is the PORTABLE users-root (/Users on macOS,
+# /home on Linux, C:\Users on Windows) — never hardcode the macOS /Users alone.
+_BROAD_ROOTS = {Path.home(), Path.home().parent, Path.home() / "Desktop", Path("/")}
 
 
 def _cwd_in_project(event: dict, project: Path) -> bool:
