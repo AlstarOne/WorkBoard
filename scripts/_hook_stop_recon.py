@@ -35,6 +35,14 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+_scripts_dir = str(Path(__file__).resolve().parent)
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+try:
+    import need_detect  # noqa: E402  (#562 shared multi-need heuristic)
+except Exception:       # never let a missing helper break the Stop hook
+    need_detect = None
+
 EDIT_TOOLS = {"edit", "write", "multiedit", "notebookedit"}
 EDIT_THRESHOLD = 3          # this many edits w/ no card = uncarded-work signal
 SHIP_RE_WORDS = ("git commit", "shipped", "deployed", "merged", "git push")
@@ -139,6 +147,19 @@ def _is_real_user(o: dict) -> bool:
     return False
 
 
+def _user_text(o: dict) -> str:
+    """Plain text of a real user prompt (str content, or concatenated text
+    blocks). Used to measure how many needs a prompt named (#562)."""
+    msg = o.get("message") or {}
+    content = msg.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(b.get("text", "") for b in content
+                        if isinstance(b, dict) and b.get("type") == "text")
+    return ""
+
+
 def scan_transcript(path: Path, project_root=None) -> dict:
     """Tally this session's activity from its own transcript jsonl. Edits are
     scoped to project_root (#78): edits to files outside the board's project
@@ -154,6 +175,13 @@ def scan_transcript(path: Path, project_root=None) -> dict:
     card_actions = 0
     user_turns = 0
     last_user = ""
+    # #562 sign-off mirror — session totals (NOT reset per turn):
+    #   max_needs    = the most needs any single user prompt named
+    #   capture_units = cards + subtasks created this session. SHAPE-NEUTRAL:
+    #     a 1-card+N-subtask capture and an N-card capture clear the same bar,
+    #     so the mirror never pushes toward multi-card; it flags only a real DROP.
+    max_needs = 1
+    capture_units = 0
     try:
         with path.open("r", errors="replace") as f:
             for line in f:
@@ -175,6 +203,12 @@ def scan_transcript(path: Path, project_root=None) -> dict:
                         edits = 0
                         ship_signals = 0
                         card_actions = 0
+                        if need_detect is not None:
+                            txt = _user_text(o)
+                            if txt:
+                                last_user = txt
+                                max_needs = max(max_needs,
+                                                need_detect.count_needs(txt))
                 elif tp == "assistant":
                     edits += _in_scope_edits(o, pr)
                     bash = _bash_cmd(o).lower()
@@ -183,6 +217,12 @@ def scan_transcript(path: Path, project_root=None) -> dict:
                             ship_signals += 1
                         if any(m in bash for m in CARD_MARKERS):
                             card_actions += 1
+                        # Session-total capture units (#562). Count adds AND
+                        # subtask-adds separately (a card.py command may issue
+                        # several); "card.py subtask add" does not contain the
+                        # "card.py add" substring, so no double counting.
+                        capture_units += bash.count("card.py add")
+                        capture_units += bash.count("card.py subtask add")
     except OSError:
         pass
     return {
@@ -190,6 +230,8 @@ def scan_transcript(path: Path, project_root=None) -> dict:
         "ship_signals": ship_signals,
         "card_actions": card_actions,
         "user_turns": user_turns,
+        "max_needs": max_needs,
+        "capture_units": capture_units,
     }
 
 
@@ -262,7 +304,8 @@ def main() -> int:
     # outside it (memory, other repos) don't trip the un-carded backstop.
     project_root = board_path.parent.parent
     act = scan_transcript(Path(transcript), project_root) if transcript else {
-        "edits": 0, "ship_signals": 0, "card_actions": 0, "user_turns": 0}
+        "edits": 0, "ship_signals": 0, "card_actions": 0, "user_turns": 0,
+        "max_needs": 1, "capture_units": 0}
 
     board = load_board(board_path)
     cards = board.get("cards") or []
@@ -311,8 +354,15 @@ def main() -> int:
         and not carded
         and not inprogress
     )
+    # #562 multi-need DROP mirror (non-blocking, SHAPE-NEUTRAL). A prompt this
+    # session named ≥2 needs, but fewer were captured on the board (cards +
+    # subtasks) than needs — so one may have been left in the conversation. Both
+    # correct shapes (1 card + N subtasks, OR N cards) clear this bar equally;
+    # it never pushes toward multi-card. Mirror only — never blocks.
+    need_gap = (act.get("max_needs", 1) >= 2
+                and act.get("capture_units", 0) < act["max_needs"])
     # Nothing worth surfacing → stay silent (don't nag on a read-only session).
-    if not uncarded_risk and not inprogress and not batched:
+    if not uncarded_risk and not inprogress and not batched and not need_gap:
         return 0
 
     reasons = []
@@ -339,6 +389,15 @@ def main() -> int:
             f"{len(inprogress)} card(s) still In-Progress at sign-off ({ip}). "
             f"Confirm each is actually done (→ move to done w/ writeup) or leave "
             f"a note on why it's still open."
+        )
+    if need_gap:
+        reasons.append(
+            f"A prompt this session named ~{act['max_needs']} needs but only "
+            f"{act['capture_units']} were captured on the board (cards + subtasks) "
+            f"— a need may have been left in the conversation. Confirm ALL of them "
+            f"are on the board (in whatever shape the header test gives — one card "
+            f"+ subtasks OR separate cards), or note why fewer. (Carding LAW — "
+            f"capture up front; SKILL.md shape banner.)"
         )
 
     payload_out = {

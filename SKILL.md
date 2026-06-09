@@ -65,6 +65,15 @@ removed because it jumped. **No "want me to add a card?" prompt — just do it.*
 
 ### Shape → pattern (LAW — every unit MUST match exactly one of these rows)
 
+> 🔒 **CAPTURE ALL LISTED NEEDS UP FRONT — before starting any.** The moment the user names more
+> than one need, get the **whole set onto the board first**, landing in Task — capturing is instant,
+> only the *work* waits. Deferring is the bug: "remember there are N tasks" is the exact job this
+> board deletes (the VISION "task 5 forgotten" case). **This is about TIMING, not shape** — capture
+> everything now, *then* shape it the normal way with the header test below (one card + subtasks if
+> they share a header; separate cards if they don't). Mixed lists too: capture the ones you'll do
+> *later* NOW, not just the one you start. (At sign-off a non-blocking mirror flags a possible
+> dropped need — it counts cards **and** subtasks, so it never pushes you toward more cards; see law #3.)
+
 > **Get the shape right and the board stays a clean, glanceable mirror for the user — this is the
 > structural heart of live carding; spend the few seconds to match the row exactly.**
 
@@ -80,7 +89,7 @@ removed because it jumped. **No "want me to add a card?" prompt — just do it.*
 |---|---|
 | **1. Single task** | 1 card: `add` → `fly inprogress` (before editing) → `fly done --writeup`. Title = a plain name, e.g. `Fix auth redirect` — **no ` + ` separators** (those are ONLY for multi-part cards). The atomic template the others compose from. |
 | **2a. Multiple RELATED parts — one deliverable** *(passes the header test)* | **1 card + N subtasks, decomposed BEFORE inprogress.** **Title = the parts separated by ` + `** (the glance); **each part is also a subtask** (for tick-off). **Long lists** (title never exceeds **4 ` + ` segments**): ≤4 parts → flat ` + ` title; **5–16 → group** into ≤4 *named* groups of ≤4 (title = group names; items become **nested** subtasks via `subtask add <n> "<item>" --parent <gid>`); **>16 → it's a phase plan** (shape 4). Subtasks exist before `fly inprogress` (5-step order below). |
-| **2b. Multiple INDEPENDENT tasks — no single header** *(fails the header test)* | **N cards.** `add` **ALL N up front into Task FIRST** — before starting *any* of the work, so none gets buried (the VISION "task 5 forgotten" case) — *then* fly them `inprogress`→`done` **one at a time** (one pulse). **Don't** add-one→finish→add-next; create the whole batch first. If you can't name them with one label, they're NOT one card. |
+| **2b. Multiple INDEPENDENT tasks — no single header** *(fails the header test)* | **N cards** (per the up-front capture banner above — `add` ALL N into Task FIRST, before starting any). *Then* fly them `inprogress`→`done` **one at a time** (one pulse). **Don't** add-one→finish→add-next; create the whole batch first. If you can't name them with one label, they're NOT one card. |
 | **3. Plan mode (multi-step plan)** | 1 **parent** card + `subtask add` per step; fly parent `inprogress`, `subtask done` at each commit, `fly done` once after final verify — *not* one done-card per step (that shows "done" while the build is half-built). |
 | **4. Phase / tier plan** | **1 card PER PHASE**, tagged `phase`, title `Phase N — <goal>`, in **Task**; the phase's deliverables are its **subtasks**. The roadmap = N phase cards, glanceable. **Phase cards never go to `inprogress`** — to build a deliverable, **GRADUATE** it: `add --column task --title "<deliverable>" --link <phase#>` → `fly inprogress`; tick the phase's matching subtask when that card ships. One graduated card in flight at a time. (`card.py fly` **blocks** a `phase`-tagged card from entering inprogress and hands you the graduate command.) |
 | **5. Mid-task branch** *(test: does it serve the CURRENT card's goal?)* | "Mid-task" is NOT the test — you're *always* mid-task. The test is **does resolving this serve the current card's goal?** **Yes** (a blocker you must clear to ship this card) → **subtask**, parent **stays `inprogress`**; `subtask add <n> "<finding>" --parent <sid>` the instant it trees out, *before* acting; unwind leaf-first, parent `fly done` last. **No** (e.g. doing backend, you spot an unrelated UI bug) → **NEW card** into Task, keep your one pulse on the current card, pick it up after. Use `blocked` only for an external hand-off (it drops the pulse). |

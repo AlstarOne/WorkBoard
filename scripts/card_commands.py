@@ -28,6 +28,7 @@ _scripts_dir = str(Path(__file__).resolve().parent)
 if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 import _boardio  # noqa: E402
+import need_detect  # noqa: E402  (#562 shared multi-need heuristic)
 import _render   # noqa: E402  (shared markdown/html renderers — #115 export/wiki)
 import _metrics  # noqa: E402  (velocity metrics — #114)
 
@@ -269,30 +270,11 @@ def _record_move(card, old_col, new_col, via=None):
 
 def _looks_multipart(title: str, origin: str) -> bool:
     """Heuristic: does this card describe MORE THAN ONE part? Used by the
-    decompose-before-IP guard (#103). Conservative — only fires on strong
-    list signals so a single task with one stray comma doesn't trip it:
-      • a ` + `-joined title (the canonical multi-part shape, e.g.
-        `Column delete + grip drag + drag-to-trash`)
-      • a numbered list with ≥2 items (`1. … 2. …` / `1) … 2)`)
-      • `Header: a, b` — a colon followed by a comma-list
-      • ≥2 commas in the title (a list of ≥3 things)
-      • an explicit `, and …` / `; …` list joiner anywhere
-    """
-    title = title or ""
-    origin = origin or ""
-    text = f"{title}\n{origin}".lower()
-    if " + " in title:   # +-joined part labels — the canonical 2a title format
-        return True
-    nums = re.findall(r"(?:^|\s)(\d+)[.)]\s", text)
-    if len(set(nums)) >= 2:
-        return True
-    if ":" in title and "," in title.split(":", 1)[1]:
-        return True
-    if title.count(",") >= 2:
-        return True
-    if re.search(r",\s+and\s+\S", text) or re.search(r";\s+\S", text):
-        return True
-    return False
+    decompose-before-IP guard (#103). The logic now lives in need_detect (the
+    single source of truth shared with the prompt nudge + sign-off mirror, #562)
+    so the definition can't drift across the three consumers — behavior is
+    unchanged. See need_detect.looks_multipart_card for the signal list."""
+    return need_detect.looks_multipart_card(title, origin)
 
 
 def cmd_fly(args, d, board):

@@ -11,6 +11,11 @@
 set +e
 set -u
 
+# Capture the UserPromptSubmit payload (JSON with a `prompt` field) once — used
+# below for the #562 multi-need nudge. Must read stdin here before anything else
+# consumes it.
+payload="$(cat)"
+
 # Walk up from CWD looking for board/board.json (max 8 levels).
 # This is the ONLY trigger — a server elsewhere on the machine shouldn't
 # leak protocol chatter into non-board projects.
@@ -83,8 +88,34 @@ for line in sys.stdin:
 print(last)" 2>/dev/null)"
 fi
 
+# #562 multi-need nudge (SHAPE-NEUTRAL): if THIS prompt names several needs,
+# remind to capture ALL of them on the board up front — before starting any —
+# and leave the one-card-vs-N-cards shape to the normal header test. Reuses the
+# shared need_detect heuristic so the definition matches the #103 guard + the
+# sign-off mirror. Best-effort; silent on parse/import failure.
+nudge="$(printf '%s' "${payload}" | BS_SCRIPTS="$(cd "$(dirname "$0")" && pwd)" python3 -c "
+import sys, os, json
+sys.path.insert(0, os.environ.get('BS_SCRIPTS', ''))
+try:
+    p = json.load(sys.stdin).get('prompt', '') or ''
+except Exception:
+    p = ''
+try:
+    import need_detect
+    multi = bool(p) and need_detect.looks_multi_need(p)
+except Exception:
+    multi = False
+if multi:
+    sys.stdout.write(
+        '\n⚠ This prompt names MULTIPLE needs — capture ALL of them on the board NOW, '
+        'before starting any, so none gets buried. Shape it the normal way (header test: '
+        'one card + subtasks if they share a header, else separate cards) — but get the '
+        'WHOLE set into Task first, then fly one pulse at a time.'
+    )
+" 2>/dev/null)"
+
 cat <<MSG
-<board-steward-protocol>
+<board-steward-protocol>${nudge}
 A live work board tracks this project${server_hint}. The board is source of truth, not your memory.
 
 LIVE lifecycle — keep the board in sync as you work, never batch to session end:
