@@ -2115,14 +2115,23 @@ function _asStep() {
     if (x < r.left + AS_EDGE)        board.scrollLeft -= _asRamp(x - r.left);
     else if (x > r.right - AS_EDGE)  board.scrollLeft += _asRamp(r.right - x);
   }
-  // Vertical pan within the column the cursor is currently over (reach a card
-  // far down a long column). elementFromPoint resolves the live hover target.
-  const el = document.elementFromPoint(x, y);
-  const body = el && el.closest ? el.closest('.column-body') : null;
-  if (body) {
-    const r = body.getBoundingClientRect();
-    if (y < r.top + AS_EDGE)         body.scrollTop -= _asRamp(y - r.top);
-    else if (y > r.bottom - AS_EDGE) body.scrollTop += _asRamp(r.bottom - y);
+  // #540 — vertical pan: use the BOARD's top/bottom as the edge zone (like the
+  // horizontal pan uses its left/right), so dragging toward the viewport top/
+  // bottom pans even past a short column's own edge or over the header padding.
+  // Scroll the column-body at the cursor's X; clamp the probe Y INTO the board so
+  // elementFromPoint still lands on a body at the extreme edge (where the raw
+  // cursor would hit padding/header and find nothing — the old narrow-zone bug).
+  if (board) {
+    const br = board.getBoundingClientRect();
+    let dy = 0;
+    if (y < br.top + AS_EDGE)         dy = -_asRamp(y - br.top);
+    else if (y > br.bottom - AS_EDGE) dy =  _asRamp(br.bottom - y);
+    if (dy) {
+      const probeY = Math.max(br.top + 1, Math.min(br.bottom - 1, y));
+      const el = document.elementFromPoint(x, probeY);
+      const body = el && el.closest ? el.closest('.column-body') : null;
+      if (body) body.scrollTop += dy;
+    }
   }
 }
 function _asStart() {
