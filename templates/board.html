@@ -2310,6 +2310,41 @@ function stackOrderedColumns() {
   }
   return out;
 }
+
+// #534 — lightweight column reorder for the live column-DRAG preview. render()
+// does board.innerHTML='' and re-creates EVERY card (renderCardCompact) — on a
+// big board (hundreds of cards) that runs on every drag frame and is the column-
+// swap lag. A column reorder never changes a CARD, only column ORDER, so we
+// rebuild just the .column-stack wrappers and RE-PARENT the existing .column
+// nodes (which already hold their rendered cards + listeners + scroll). Cost
+// drops from O(cards) to O(columns). Falls back to the authoritative render() if
+// the live DOM doesn't hold every state column, or if the stack walk wouldn't
+// place every existing node (orphan) — so correctness can never regress.
+function reorderColumnsDOM() {
+  if (!state || _view !== 'board') { render(); return; }
+  const board = $('#board');
+  const existing = new Map();
+  board.querySelectorAll('.column[data-col]').forEach(el => existing.set(el.dataset.col, el));
+  // Every column in state must have a live node, else do a full render.
+  if ((state.columns || []).some(c => !existing.has(c.id))) { render(); return; }
+  const addBtn = board.querySelector('.col-add-btn');
+  const frag = document.createDocumentFragment();
+  getStackRoots().forEach(root => {
+    const wrap = document.createElement('div');
+    wrap.className = 'column-stack';
+    wrap.dataset.stackRoot = root.id;
+    walkStack(root.id).forEach(col => {
+      const node = existing.get(col.id);
+      if (node) wrap.appendChild(node);   // MOVES the existing subtree (cards intact)
+    });
+    frag.appendChild(wrap);
+  });
+  // Safety: if the walk didn't place every existing column (orphan/cycle), don't
+  // risk dropping a column — fall back to the full render (which is authoritative).
+  if (frag.querySelectorAll('.column[data-col]').length !== existing.size) { render(); return; }
+  board.querySelectorAll('.column-stack').forEach(w => w.remove());   // old (now-empty) wrappers
+  board.insertBefore(frag, addBtn || null);
+}
 // Normalise stackUnder fields on incoming state: every column gets the field
 // (default null); dangling refs reset to null. Idempotent.
 function migrateStackUnder(s) {
@@ -2455,7 +2490,7 @@ function previewReorderColumn(srcId, targetId) {
   next.splice(insertAt, 0, moved);
   state.columns = next;
   _colLastPreviewTargetId = targetId;
-  render();
+  reorderColumnsDOM();   // #534 — reuse card DOM instead of a full render() per drag frame
   requestAnimationFrame(() => flipPlayColumns(old));
 }
 
@@ -5341,7 +5376,7 @@ function renderColumn(col, cards) {
         const oldR = captureColumnRects();
         state.columns = JSON.parse(JSON.stringify(_colDragSnapshot));
         _colLastPreviewTargetId = null;
-        render();
+        reorderColumnsDOM();   // #534 — light reorder, not a full card rebuild
         requestAnimationFrame(() => flipPlayColumns(oldR));
         dbg('col preview reverted — back to origin');
         return;
@@ -5358,7 +5393,7 @@ function renderColumn(col, cards) {
         const old = captureColumnRects();
         state.columns = JSON.parse(JSON.stringify(_colDragSnapshot));
         _colLastPreviewTargetId = null;
-        render();
+        reorderColumnsDOM();   // #534 — light reorder, not a full card rebuild
         requestAnimationFrame(() => flipPlayColumns(old));
       }
     } else {
