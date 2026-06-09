@@ -368,6 +368,14 @@
     box-shadow: inset 0 -4px 0 0 var(--accent), inset 0 0 0 2px var(--accent);
     background: #F1E9DF;
   }
+  /* #545 — single insertion line for column reorder. A column drag shows exactly
+     ONE of: this line (reorder gap) or a col-drop-stack-target (nest). Nothing
+     reshuffles until drop, so the indicator is stable and always == the drop. */
+  #col-drop-line {
+    position: fixed; z-index: 1900; width: 3px; border-radius: 2px;
+    background: var(--accent); box-shadow: 0 0 0 1px rgba(217,119,87,0.35), 0 2px 8px rgba(217,119,87,0.5);
+    pointer-events: none; display: none;
+  }
   .column {
     background: var(--col-bg);
     border: 1px solid var(--card-border);
@@ -1669,9 +1677,11 @@ let _localMoveLog = new Map(); // #518 — cardId→ts of moves logged directly,
 // can revert all the live-preview reorders. _colDragSrcId carries the source
 // id because dragover events can't read dataTransfer.getData (security).
 let _colDragSrcId = null;
-let _colDragSnapshot = null;
 let _colDragCommitted = false;
-let _colLastPreviewTargetId = null;  // #119 — idempotence guard for dragover thrash
+// #545 — the ONE pending drop target, computed purely from the pointer on each
+// dragover (no reshuffle). { mode:'reorder', beforeRootId } | { mode:'stack', parentId }.
+// Drives both the indicator and the commit, so highlight always == drop.
+let _colDrop = null;
 
 // #119 — visible drag HUD. Prints every drag/mouse event as a green-on-black
 // overlay so events are visible regardless of console filters. Header bar
@@ -2332,12 +2342,10 @@ function stackOrderedColumns() {
 // drops from O(cards) to O(columns). Falls back to the authoritative render() if
 // the live DOM doesn't hold every state column, or if the stack walk wouldn't
 // place every existing node (orphan) — so correctness can never regress.
-// #534 — SINGLE source of truth for the column→.column-stack DOM layout, shared
-// by render() (fresh nodes) and reorderColumnsDOM() (reused nodes). Appends one
-// .column-stack wrapper per root into `container`, and for each column in walk
-// order appends whatever `perColumn(col)` returns. Keeping both callers on this
-// helper means the stack structure can never drift between a full render and the
-// live drag preview.
+// Builds the column→.column-stack DOM layout: one .column-stack wrapper per root
+// into `container`, and for each column in walk order appends whatever
+// `perColumn(col)` returns. (Used by render(); kept as a helper so the stack
+// structure lives in one place.)
 function buildColumnStacks(container, perColumn) {
   getStackRoots().forEach(root => {
     const wrap = document.createElement('div');
@@ -2351,22 +2359,59 @@ function buildColumnStacks(container, perColumn) {
   });
 }
 
-function reorderColumnsDOM() {
-  if (!state || _view !== 'board') { render(); return; }
-  const board = $('#board');
-  const existing = new Map();
-  board.querySelectorAll('.column[data-col]').forEach(el => existing.set(el.dataset.col, el));
-  // Every column in state must have a live node, else do a full render.
-  if ((state.columns || []).some(c => !existing.has(c.id))) { render(); return; }
-  const addBtn = board.querySelector('.col-add-btn');
-  const frag = document.createDocumentFragment();
-  // Reuse the existing subtree per column (cards + listeners + scroll intact).
-  buildColumnStacks(frag, col => existing.get(col.id));
-  // Safety: if the walk didn't place every existing column (orphan/cycle), don't
-  // risk dropping a column — fall back to the full render (which is authoritative).
-  if (frag.querySelectorAll('.column[data-col]').length !== existing.size) { render(); return; }
-  board.querySelectorAll('.column-stack').forEach(w => w.remove());   // old (now-empty) wrappers
-  board.insertBefore(frag, addBtn || null);
+// #545 — column id → its stack ROOT id (walk stackUnder up). The horizontal
+// row is the roots; reorder operates between roots.
+function rootIdOf(colId) {
+  const byId = new Map((state && state.columns || []).map(c => [c.id, c]));
+  let c = byId.get(colId), guard = 0;
+  while (c && c.stackUnder && guard++ < 32) c = byId.get(c.stackUnder);
+  return c ? c.id : colId;
+}
+// #545 — the single insertion line (lazy, like #col-trash). Positioned at a gap
+// between .column-stack wrappers; spans the hovered stack's height.
+let _colDropLineEl = null;
+function showColDropLine(x, top, height) {
+  if (!_colDropLineEl) {
+    _colDropLineEl = document.createElement('div');
+    _colDropLineEl.id = 'col-drop-line';
+    document.body.appendChild(_colDropLineEl);
+  }
+  _colDropLineEl.style.left = (x - 1.5) + 'px';
+  _colDropLineEl.style.top = top + 'px';
+  _colDropLineEl.style.height = height + 'px';
+  _colDropLineEl.style.display = 'block';
+}
+function hideColDropLine() { if (_colDropLineEl) _colDropLineEl.style.display = 'none'; }
+// #545 — commit the pending _colDrop on drop/dragend. ONE render + FLIP. Returns
+// true if anything changed. No-op (returns false) when the order is unchanged.
+function applyColDrop() {
+  if (!state || !_colDrop || !_colDragSrcId) return false;
+  const srcId = _colDragSrcId;
+  if (_colDrop.mode === 'stack') {
+    if (_colDrop.parentId && _colDrop.parentId !== srcId) { stackColumnUnder(srcId, _colDrop.parentId); return true; }
+    return false;
+  }
+  // reorder: dragged column becomes a ROOT, spliced before the target root.
+  const cols = state.columns.map(c => ({ ...c }));
+  const si = cols.findIndex(c => c.id === srcId);
+  if (si < 0) return false;
+  const before = JSON.stringify(state.columns.map(c => [c.id, c.stackUnder]));
+  cols[si].stackUnder = null;
+  const [moved] = cols.splice(si, 1);
+  let insertAt = cols.length;
+  if (_colDrop.beforeRootId) {
+    const ti = cols.findIndex(c => c.id === _colDrop.beforeRootId);
+    if (ti >= 0) insertAt = ti;
+  }
+  cols.splice(insertAt, 0, moved);
+  if (JSON.stringify(cols.map(c => [c.id, c.stackUnder])) === before) return false;  // no change
+  pushUndo();
+  const old = captureColumnRects();
+  state.columns = cols;
+  scheduleSave();
+  render();
+  requestAnimationFrame(() => flipPlayColumns(old));
+  return true;
 }
 // Normalise stackUnder fields on incoming state: every column gets the field
 // (default null); dangling refs reset to null. Idempotent.
@@ -2483,43 +2528,6 @@ function reorderColumn(srcId, targetId) {
 // committed on drop or rolled back via the snapshot on dragend-w/o-drop).
 // Clears src.stackUnder so dragging a stacked column across the row pops
 // it out of its stack.
-function previewReorderColumn(srcId, targetId) {
-  // #119 correction — iPhone-style splice-insert reflow. Drag A onto C:
-  // remove A from its slot, insert at C's slot; columns between A and C
-  // shift one slot toward A's old slot to fill the gap. Path-independent:
-  // computed relative to the dragstart snapshot so the result depends only
-  // on the current hover target, not the intermediate hover history.
-  if (!state || srcId === targetId || !_colDragSnapshot) return;
-  // Idempotence: dragover fires ~every frame while cursor is over a column.
-  // Bail if target hasn't changed — otherwise we re-render + FLIP every
-  // frame, animations stack, and unrelated columns visibly vibrate.
-  if (_colLastPreviewTargetId === targetId) return;
-  const snap = _colDragSnapshot;
-  const si = snap.findIndex(c => c.id === srcId);
-  const ti = snap.findIndex(c => c.id === targetId);
-  if (si < 0 || ti < 0 || si === ti) return;
-  const old = captureColumnRects();
-  const next = snap.map(c => ({ ...c }));
-  const wasStacked = !!next[si].stackUnder;
-  if (wasStacked) next[si].stackUnder = null;  // free from stack on horizontal drag
-  const [moved] = next.splice(si, 1);
-  // #130 — for root source, splice(ti) keeps iPhone semantic (target shifts
-  // toward src's old slot). For stacked source, src had no row slot; the
-  // removal didn't shift target visually, so we want moved to LAND at the
-  // target's current slot and push the target away. Use target's post-removal
-  // index in that case.
-  let insertAt = ti;
-  if (wasStacked) insertAt = next.findIndex(c => c.id === targetId);
-  next.splice(insertAt, 0, moved);
-  state.columns = next;
-  _colLastPreviewTargetId = targetId;
-  reorderColumnsDOM();   // #534 — reuse card DOM instead of a full render() per drag frame
-  // #534 — SHORT glide for the live drag preview (was the 1080ms default, which
-  // overlaps across slot crossings and lags behind the cursor). The drop/commit
-  // paths keep the slower 1080ms settle.
-  requestAnimationFrame(() => flipPlayColumns(old, { duration: 250 }));
-}
-
 // #117 — stack `srcId` directly under `parentId`. Refuses to create a cycle
 // (parent must not be a descendant of src) and refuses self-parent.
 function stackColumnUnder(srcId, parentId) {
@@ -4260,8 +4268,8 @@ function render() {
     // #117 — render in stacks: one .column-stack wrapper per root, containing
     // the root + all stackUnder descendants in walk order. Single-column
     // "stacks" still get a wrapper so the layout is uniform.
-    // #534 — shared with reorderColumnsDOM() via buildColumnStacks; render()
-    // creates a fresh .column per column (with the In-Progress top-pin sort).
+    // Build the stacks via buildColumnStacks; render() creates a fresh .column
+    // per column (with the In-Progress top-pin sort).
     buildColumnStacks(board, col => {
       let cards = state.cards.filter(c => c.column === col.id);
       // #249 — pin the "current work" card (most-recent in In Progress) to
@@ -5308,17 +5316,16 @@ function renderColumn(col, cards) {
     el.classList.add('col-dragging');
     document.body.classList.add('col-dragging-active');
     _colDragRects = captureColumnRects();
-    // #119 column — record source + snapshot for live-preview reorders.
+    // #545 — record source only. NO snapshot: the insertion-line model never
+    // reshuffles state.columns during the drag, so there's nothing to snapshot
+    // or revert — the move is computed into _colDrop and committed once on drop.
     _colDragSrcId = col.id;
-    _colDragSnapshot = JSON.parse(JSON.stringify(state.columns));
     _colDragCommitted = false;
-    _colLastPreviewTargetId = null;
-    // #119 correction — hide the source column's footprint so it doesn't
-    // sit "in the background" while being dragged. setTimeout(0) so the
-    // browser captures the drag image synchronously before opacity flips.
-    // Use opacity (not visibility:hidden) so the slot still receives drop
-    // events — otherwise releasing the cursor over the source's new slot
-    // fires no drop, and dragend reverts the swap.
+    _colDrop = null;
+    // #119 correction — hide the source column's footprint so it doesn't sit
+    // "in the background" while being dragged. setTimeout(0) so the browser
+    // captures the drag image synchronously before opacity flips. Opacity (not
+    // visibility:hidden) so the slot still receives drop events.
     setTimeout(() => {
       const cur = document.querySelector('.column[data-col="' + cssEsc(col.id) + '"]');
       if (cur) cur.style.opacity = '0';
@@ -5333,45 +5340,18 @@ function renderColumn(col, cards) {
       c.classList.remove('col-drop-target');
       c.classList.remove('col-drop-stack-target');
     });
+    hideColDropLine();
+    // #545 — if drop didn't fire (fast release over a gap) but we have a pending
+    // target, commit it now. applyColDrop needs _colDragSrcId/_colDrop, so commit
+    // BEFORE clearing them. A pure cancel (no target) changed nothing — just
+    // restore the source opacity (no reshuffle happened, so no revert needed).
+    if (!_colDragCommitted && _colDrop) applyColDrop();
     _colDragRects = null;
-    // #119 correction — clear _colDragSrcId BEFORE any revert-render so the
-    // re-render in renderColumn doesn't re-hide A. Capture locals first
-    // because some branches below need the snapshot / last-preview target.
-    const wasCommitted = _colDragCommitted;
-    const snap = _colDragSnapshot;
-    const lastPreviewId = _colLastPreviewTargetId;
     _colDragSrcId = null;
-    _colDragSnapshot = null;
     _colDragCommitted = false;
-    _colLastPreviewTargetId = null;
-    if (wasCommitted) {
-      dbg('col dragend (committed via drop)');
-      el.style.opacity = '';
-      document.querySelectorAll('.column').forEach(c => { c.style.opacity = ''; });
-    } else if (lastPreviewId && snap) {
-      // Fast drag — drop never fired (user released over a gap, or in the
-      // span between dragover events). The preview already moved the column
-      // to a valid slot; treat that as the user's intent and commit.
-      dbg('col dragend — commit at last preview ' + lastPreviewId);
-      _undoStack.push(JSON.stringify({
-        title: state.title || '',
-        columns: snap,
-        cards: state.cards || [],
-        activeWorkId: state.activeWorkId || null,   // #503 — keep pulse in lockstep
-      }));
-      if (_undoStack.length > _UNDO_CAP) _undoStack.shift();
-      _redoStack.length = 0;
-      scheduleSave();
-      el.style.opacity = '';
-      document.querySelectorAll('.column').forEach(c => { c.style.opacity = ''; });
-    } else if (snap) {
-      // Pure cancel — drag never crossed into another column. Revert.
-      dbg('col dragend — revert to snapshot');
-      const old = captureColumnRects();
-      state.columns = snap;
-      render();
-      requestAnimationFrame(() => flipPlayColumns(old));
-    }
+    _colDrop = null;
+    el.style.opacity = '';
+    document.querySelectorAll('.column').forEach(c => { c.style.opacity = ''; });
   });
   // Reorder on drop onto another column's edge. #117: if drop lands in the
   // BOTTOM 40% of the target column, stack the source UNDER the target
@@ -5383,87 +5363,54 @@ function renderColumn(col, cards) {
   }
   el.addEventListener('dragover', e => {
     const draggingColId = (e.dataTransfer.types || []).includes('text/col-id');
-    if (!draggingColId) return;
+    if (!draggingColId || !_colDragSrcId) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    // #131 — if a preview is in flight AND cursor is over the source's
-    // ORIGINAL slot (i.e. user is dragging back to where they started),
-    // revert state.columns to the dragstart snapshot. The slot is now
-    // occupied by whichever column shifted into it during preview, so this
-    // dragover fires on THAT column — we identify "back to origin" by
-    // checking cursor X against the source's original bbox.
-    if (_colDragSrcId && _colDragSnapshot && _colLastPreviewTargetId && _colDragRects) {
-      const srcOrigRect = _colDragRects.get(_colDragSrcId);
-      // #132 — inset by 30px on each side so the revert zone doesn't share a
-      // boundary with the adjacent slot's preview-target zone. Without this,
-      // cursor jitter at the slot boundary oscillates between preview (just
-      // outside source bbox) and revert (just inside).
-      const REVERT_INSET = 30;
-      if (srcOrigRect && e.clientX >= srcOrigRect.left + REVERT_INSET && e.clientX <= srcOrigRect.right - REVERT_INSET) {
-        el.classList.remove('col-drop-stack-target');
-        const oldR = captureColumnRects();
-        state.columns = JSON.parse(JSON.stringify(_colDragSnapshot));
-        _colLastPreviewTargetId = null;
-        reorderColumnsDOM();   // #534 — light reorder, not a full card rebuild
-        requestAnimationFrame(() => flipPlayColumns(oldR, { duration: 250 }));   // #534 — snappy preview
-        dbg('col preview reverted — back to origin');
-        return;
-      }
-    }
+    // #545 — compute ONE drop target from the pointer; NEVER reshuffle. Clear any
+    // stale orange first so at most one indicator ever shows (no "two reds").
+    document.querySelectorAll('.col-drop-stack-target').forEach(c => c.classList.remove('col-drop-stack-target'));
+    if (col.id === _colDragSrcId) { hideColDropLine(); _colDrop = null; return; }  // own slot — no target
     if (_inStackZone(e)) {
-      // Stack zone: keep flat order (no live reorder) and show the stack hint.
+      // Nest zone (bottom 40%): highlight THIS column — it WILL nest here on drop.
+      // Because nothing reshuffles, this rect is stable: highlight zone == drop zone
+      // (no more "turns orange but I have to go nearer").
       el.classList.add('col-drop-stack-target');
-      // #129 — if a reorder preview was already in flight (cursor crossed
-      // through some column's top 60% on the way down), revert it now so the
-      // stack target stops sliding away from the cursor. Neighbors FLIP back
-      // to their original slots; source stays opacity:0 in its original slot.
-      if (_colDragSnapshot && _colLastPreviewTargetId) {
-        const old = captureColumnRects();
-        state.columns = JSON.parse(JSON.stringify(_colDragSnapshot));
-        _colLastPreviewTargetId = null;
-        reorderColumnsDOM();   // #534 — light reorder, not a full card rebuild
-        requestAnimationFrame(() => flipPlayColumns(old, { duration: 250 }));   // #534 — snappy preview
-      }
+      hideColDropLine();
+      _colDrop = { mode: 'stack', parentId: col.id };
     } else {
-      el.classList.remove('col-drop-stack-target');
-      // #119 — top/side zone: live-preview reorder so target glides aside
-      // BEFORE drop. Skip if cursor hasn't crossed onto a different column.
-      if (_colDragSrcId && _colDragSrcId !== col.id) {
-        dbg('col preview → ' + col.id);
-        previewReorderColumn(_colDragSrcId, col.id);
+      // Reorder zone: a single insertion line at the gap before/after this
+      // column's STACK ROOT, chosen by the pointer vs the root wrapper's midline.
+      // Hysteresis: the line only jumps a gap when the cursor crosses a midline,
+      // so it can't oscillate/flicker.
+      const wrap = el.closest('.column-stack');
+      if (!wrap) { hideColDropLine(); _colDrop = null; return; }
+      // Hovering the dragged column's OWN stack (root or a child of it) is not a
+      // valid reorder target — skip so we never splice the column to the end.
+      if (rootIdOf(col.id) === rootIdOf(_colDragSrcId)) { hideColDropLine(); _colDrop = null; return; }
+      const wr = wrap.getBoundingClientRect();
+      let beforeRootId, gapX;
+      if (e.clientX < wr.left + wr.width / 2) {
+        beforeRootId = wrap.dataset.stackRoot;            // insert BEFORE this root
+        gapX = wr.left;
+      } else {
+        const nx = wrap.nextElementSibling;
+        const nextWrap = (nx && nx.classList.contains('column-stack')) ? nx : null;
+        beforeRootId = nextWrap ? nextWrap.dataset.stackRoot : null;   // null = end of row
+        gapX = wr.right;
       }
+      showColDropLine(gapX, wr.top, wr.height);
+      _colDrop = { mode: 'reorder', beforeRootId };
     }
   });
   el.addEventListener('drop', e => {
-    const srcId = e.dataTransfer.getData('text/col-id') || _colDragSrcId;
-    el.classList.remove('col-drop-stack-target');
-    if (!srcId) return;
+    if (!_colDragSrcId && !(e.dataTransfer.types || []).includes('text/col-id')) return;
     e.preventDefault();
-    if (_inStackZone(e)) {
-      // Stack: revert any live-preview reorder first (so stackUnder applies
-      // to the user's INTENT, not the previewed-row position), then stack.
-      if (_colDragSnapshot) {
-        state.columns = _colDragSnapshot;
-        _colDragSnapshot = null;
-      }
-      stackColumnUnder(srcId, col.id);
-    } else {
-      // Already at the previewed position — just persist. push one undo entry
-      // representing the WHOLE drag, then save.
-      if (_colDragSnapshot) {
-        _undoStack.push(JSON.stringify({
-          title: state.title || '',
-          columns: _colDragSnapshot,
-          cards: state.cards || [],
-          activeWorkId: state.activeWorkId || null,   // #503 — keep pulse in lockstep
-        }));
-        if (_undoStack.length > _UNDO_CAP) _undoStack.shift();
-        _redoStack.length = 0;
-        _colDragSnapshot = null;
-      }
-      scheduleSave();
-    }
+    // #545 — commit EXACTLY the target the last dragover computed (so the drop
+    // matches the indicator the user saw). dragend does the final cleanup.
+    applyColDrop();
     _colDragCommitted = true;
+    document.querySelectorAll('.col-drop-stack-target').forEach(c => c.classList.remove('col-drop-stack-target'));
+    hideColDropLine();
     dbg('col drop on ' + col.id);
   });
 
