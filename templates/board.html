@@ -361,20 +361,15 @@
     align-self: flex-start;
     flex-shrink: 0;
     max-height: 100%;
+    /* #545 — glide when the columns shift apart to open a drop gap during a
+       column drag (transform-only, no reflow). */
+    transition: transform 180ms cubic-bezier(0.34, 1.4, 0.64, 1);
   }
   /* Bottom-40% drop-hint: when dragging a column over the lower half of a
      target column, show a dashed bottom edge that says "drop to stack". */
   .column.col-drop-stack-target {
     box-shadow: inset 0 -4px 0 0 var(--accent), inset 0 0 0 2px var(--accent);
     background: #F1E9DF;
-  }
-  /* #545 — single insertion line for column reorder. A column drag shows exactly
-     ONE of: this line (reorder gap) or a col-drop-stack-target (nest). Nothing
-     reshuffles until drop, so the indicator is stable and always == the drop. */
-  #col-drop-line {
-    position: fixed; z-index: 1900; width: 3px; border-radius: 2px;
-    background: var(--accent); box-shadow: 0 0 0 1px rgba(217,119,87,0.35), 0 2px 8px rgba(217,119,87,0.5);
-    pointer-events: none; display: none;
   }
   .column {
     background: var(--col-bg);
@@ -2367,21 +2362,57 @@ function rootIdOf(colId) {
   while (c && c.stackUnder && guard++ < 32) c = byId.get(c.stackUnder);
   return c ? c.id : colId;
 }
-// #545 — the single insertion line (lazy, like #col-trash). Positioned at a gap
-// between .column-stack wrappers; spans the hovered stack's height.
-let _colDropLineEl = null;
-function showColDropLine(x, top, height) {
-  if (!_colDropLineEl) {
-    _colDropLineEl = document.createElement('div');
-    _colDropLineEl.id = 'col-drop-line';
-    document.body.appendChild(_colDropLineEl);
-  }
-  _colDropLineEl.style.left = (x - 1.5) + 'px';
-  _colDropLineEl.style.top = top + 'px';
-  _colDropLineEl.style.height = height + 'px';
-  _colDropLineEl.style.display = 'block';
+// #545 — capture each stack-root wrapper's ORIGINAL viewport geometry at
+// dragstart. The reorder DECISION and the shift VISUAL both read THIS (never the
+// live, mid-shift positions), so the shift can't feed back into the decision and
+// therefore cannot oscillate/flicker.
+let _colRow = [];       // [{id, left, width}] in visual order
+let _colGap = 8;
+function _captureColRow() {
+  _colRow = [];
+  document.querySelectorAll('#board .column-stack').forEach(w => {
+    const r = w.getBoundingClientRect();
+    _colRow.push({ id: w.dataset.stackRoot, left: r.left, width: r.width });
+  });
+  _colGap = _colRow.length > 1 ? Math.max(0, _colRow[1].left - (_colRow[0].left + _colRow[0].width)) : 8;
 }
-function hideColDropLine() { if (_colDropLineEl) _colDropLineEl.style.display = 'none'; }
+// #545 — "shift away": glide the columns apart (transform only, no reflow) to
+// open a gap exactly where the dragged column will land, guiding the eye. The
+// positions are the WOULD-BE layout (source removed, re-inserted before
+// _colDrop.beforeRootId), computed from the captured _colRow.
+function _applyColShift() {
+  if (!_colDrop || _colDrop.mode !== 'reorder' || !_colRow.length || !_colDragSrcId) { _clearColShift(); return; }
+  const widthOf = id => { const r = _colRow.find(x => x.id === id); return r ? r.width : (_colRow[0] || {}).width || 300; };
+  const srcRoot = rootIdOf(_colDragSrcId);
+  const draggingRoot = (_colDragSrcId === srcRoot);   // dragging a ROOT vs a stacked child
+  const gapW = (draggingRoot ? widthOf(srcRoot) : (_colRow[0] || {}).width) || 300;
+  // Roots in the row, minus the dragged root (a child leaves the root row intact),
+  // with a phantom GAP inserted where the column will land.
+  const order = _colRow.map(r => r.id).filter(id => !(draggingRoot && id === srcRoot));
+  let insertAt = order.length;
+  if (_colDrop.beforeRootId) {
+    const ti = order.indexOf(_colDrop.beforeRootId);
+    if (ti >= 0) insertAt = ti;
+  }
+  order.splice(insertAt, 0, '__gap__');
+  let x = _colRow[0].left;
+  const wouldLeft = {};
+  for (const id of order) {
+    if (id === '__gap__') { x += gapW + _colGap; continue; }
+    wouldLeft[id] = x;
+    x += widthOf(id) + _colGap;
+  }
+  document.querySelectorAll('#board .column-stack').forEach(w => {
+    const orig = _colRow.find(r => r.id === w.dataset.stackRoot);
+    const target = wouldLeft[w.dataset.stackRoot];
+    if (!orig || target == null) { w.style.transform = ''; return; }   // dragged root stays put (invisible)
+    const dx = Math.round(target - orig.left);
+    w.style.transform = dx ? `translateX(${dx}px)` : '';
+  });
+}
+function _clearColShift() {
+  document.querySelectorAll('#board .column-stack').forEach(w => { w.style.transform = ''; });
+}
 // #545 — commit the pending _colDrop on drop/dragend. ONE render + FLIP. Returns
 // true if anything changed. No-op (returns false) when the order is unchanged.
 function applyColDrop() {
@@ -5320,6 +5351,7 @@ function renderColumn(col, cards) {
     // reshuffles state.columns during the drag, so there's nothing to snapshot
     // or revert — the move is computed into _colDrop and committed once on drop.
     _colDragSrcId = col.id;
+    _captureColRow();   // #545 — snapshot original wrapper positions for the shift
     _colDragCommitted = false;
     _colDrop = null;
     // #119 correction — hide the source column's footprint so it doesn't sit
@@ -5340,7 +5372,7 @@ function renderColumn(col, cards) {
       c.classList.remove('col-drop-target');
       c.classList.remove('col-drop-stack-target');
     });
-    hideColDropLine();
+    _clearColShift();
     // #545 — if drop didn't fire (fast release over a gap) but we have a pending
     // target, commit it now. applyColDrop needs _colDragSrcId/_colDrop, so commit
     // BEFORE clearing them. A pure cancel (no target) changed nothing — just
@@ -5366,41 +5398,28 @@ function renderColumn(col, cards) {
     if (!draggingColId || !_colDragSrcId) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    // #545 — compute ONE drop target from the pointer; NEVER reshuffle. Clear any
-    // stale orange first so at most one indicator ever shows (no "two reds").
+    // #545 — compute ONE drop target from the pointer; NEVER reorder state. Clear
+    // any stale orange first so at most one indicator ever shows (no "two reds").
     document.querySelectorAll('.col-drop-stack-target').forEach(c => c.classList.remove('col-drop-stack-target'));
-    if (col.id === _colDragSrcId) { hideColDropLine(); _colDrop = null; return; }  // own slot — no target
-    if (_inStackZone(e)) {
+    if (_inStackZone(e) && col.id !== _colDragSrcId) {
       // Nest zone (bottom 40%): highlight THIS column — it WILL nest here on drop.
-      // Because nothing reshuffles, this rect is stable: highlight zone == drop zone
-      // (no more "turns orange but I have to go nearer").
+      // Rects are stable (no reshuffle), so highlight zone == drop zone.
       el.classList.add('col-drop-stack-target');
-      hideColDropLine();
+      _clearColShift();   // nest doesn't open a reorder gap
       _colDrop = { mode: 'stack', parentId: col.id };
-    } else {
-      // Reorder zone: a single insertion line at the gap before/after this
-      // column's STACK ROOT, chosen by the pointer vs the root wrapper's midline.
-      // Hysteresis: the line only jumps a gap when the cursor crosses a midline,
-      // so it can't oscillate/flicker.
-      const wrap = el.closest('.column-stack');
-      if (!wrap) { hideColDropLine(); _colDrop = null; return; }
-      // Hovering the dragged column's OWN stack (root or a child of it) is not a
-      // valid reorder target — skip so we never splice the column to the end.
-      if (rootIdOf(col.id) === rootIdOf(_colDragSrcId)) { hideColDropLine(); _colDrop = null; return; }
-      const wr = wrap.getBoundingClientRect();
-      let beforeRootId, gapX;
-      if (e.clientX < wr.left + wr.width / 2) {
-        beforeRootId = wrap.dataset.stackRoot;            // insert BEFORE this root
-        gapX = wr.left;
-      } else {
-        const nx = wrap.nextElementSibling;
-        const nextWrap = (nx && nx.classList.contains('column-stack')) ? nx : null;
-        beforeRootId = nextWrap ? nextWrap.dataset.stackRoot : null;   // null = end of row
-        gapX = wr.right;
-      }
-      showColDropLine(gapX, wr.top, wr.height);
-      _colDrop = { mode: 'reorder', beforeRootId };
+      return;
     }
+    // Reorder: decide the insertion gap from the pointer vs each root's ORIGINAL
+    // midline (_colRow, captured at dragstart) — NOT live positions — so the shift
+    // can't move the decision and can't flicker. Skip the dragged column's slot.
+    const srcRoot = rootIdOf(_colDragSrcId);
+    let beforeRootId = null;
+    for (const r of _colRow) {
+      if (r.id === srcRoot) continue;
+      if (e.clientX < r.left + r.width / 2) { beforeRootId = r.id; break; }
+    }
+    _colDrop = { mode: 'reorder', beforeRootId };
+    _applyColShift();   // glide the columns apart to open the gap (the "shift away")
   });
   el.addEventListener('drop', e => {
     if (!_colDragSrcId && !(e.dataTransfer.types || []).includes('text/col-id')) return;
@@ -5410,7 +5429,7 @@ function renderColumn(col, cards) {
     applyColDrop();
     _colDragCommitted = true;
     document.querySelectorAll('.col-drop-stack-target').forEach(c => c.classList.remove('col-drop-stack-target'));
-    hideColDropLine();
+    _clearColShift();
     dbg('col drop on ' + col.id);
   });
 
