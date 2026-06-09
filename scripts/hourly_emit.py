@@ -16,6 +16,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+# #574: a done card must visibly pass through inprogress. At speedup pacing
+# pace_s≈0, so floor the IP dwell to this many seconds so the hop is perceptible
+# (the card reads as task→IP→done, not "straight to done").
+_MIN_IP_DWELL_S = 0.35
+
 
 def _banner_update_text(card_py: Path, board: Path, num: int, title: str) -> None:
     args = [sys.executable, str(card_py), "--board", str(board), "update",
@@ -256,7 +261,10 @@ def emit_card(card_py: Path, board: Path, card: dict,
     """Add the card, then optionally walk lifecycle hops if show_lifecycle."""
     final_col = card.get("column") or "task"
     subtasks = card.get("subtasks")
-    if show_lifecycle and final_col in ("done", "inprogress"):
+    # #574: replay a lifecycle for done/inprogress AND backlog — a backlog card
+    # is work that was STARTED then deferred, so it should glide task→backlog,
+    # not just appear in backlog. (task/notes/super-urgent are born in place.)
+    if show_lifecycle and final_col in ("done", "inprogress", "backlog"):
         # Start in task → decompose → fly to final
         card_for_add = dict(card)
         card_for_add["column"] = "task"
@@ -266,17 +274,23 @@ def emit_card(card_py: Path, board: Path, card: dict,
         # #570: emit REAL subtasks while still in task (before the fly) so the
         # card arrives shaped like a live one and never trips the #103
         # decompose-before-IP guard. A done card's parts are complete → tick
-        # them (reads N/N); an inprogress card's parts stay open.
+        # them (reads N/N); inprogress/backlog parts stay open.
         _emit_subtasks(card_py, board, num, subtasks,
                        mark_done=(final_col == "done"))
         time.sleep(pace_s)
         if final_col == "done":
+            # #574: a done card MUST pass through inprogress, with a visible
+            # dwell — at speedup pacing pace_s≈0 made the IP hop flash by, so it
+            # read as "straight to done". Floor the IP dwell so the hop is seen.
             _card_fly(card_py, board, num, "inprogress")
-            time.sleep(pace_s)
+            time.sleep(max(pace_s, _MIN_IP_DWELL_S))
             _card_fly(card_py, board, num, "done",
                       writeup=card.get("notes") or "shipped (replay)")
             # #294: reconstruct the true post-ship path (bug bounces / improves)
             _replay_transitions(card_py, board, num, card.get("transitions"), pace_s)
+        elif final_col == "backlog":
+            # deferred work — glide task→backlog (not a bare appearance in backlog)
+            _card_fly(card_py, board, num, "backlog")
         else:  # inprogress
             _card_fly(card_py, board, num, "inprogress")
         return num

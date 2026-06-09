@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -353,6 +354,20 @@ def reconcile_sweep(card_py: Path, board: Path, events: list[dict],
                 continue
             if cur["column"] == target:
                 continue
+            # #574 — a corrective done-move must glide task→IP→done, not jump
+            # straight to done. If the card isn't already in inprogress, fly it
+            # there first (--force to bypass the #103 decompose guard, since
+            # this is a system reconciliation move), brief dwell, then to done.
+            if target == "done" and cur["column"] != "inprogress":
+                try:
+                    subprocess.run(
+                        [sys.executable, str(card_py), "--board", str(board),
+                         "fly", str(num), "inprogress", "--pause-ms", "150",
+                         "--via", "harvest", "--force"],
+                        capture_output=True, text=True, timeout=8)
+                    time.sleep(0.35)
+                except subprocess.SubprocessError:
+                    pass
             # #506 — these moves are the automated background harvester, not a
             # hands-on move; tag them so the Logs HUD shows (Auto-harvest) MOVE.
             args = [sys.executable, str(card_py), "--board", str(board),
