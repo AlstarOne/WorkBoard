@@ -206,9 +206,6 @@ HINT
     # Survive reboots (the gap that killed the server today). Non-fatal.
     python3 "${hook_dir}/install_autostart.py" --project "${proj_root}" --port "${want_port}" \
       >/dev/null 2>&1 || true
-    # Mark onboarded so we never auto-create a second board.
-    mkdir -p "${HOME}/.board-steward" 2>/dev/null
-    : > "${onboard_marker}"
     # Hand off to the shared digest + auto-open path below.
     board_path="${board_dir}/board.json"
     # Don't ALSO run the SessionStart recon this turn: the bootstrap fill is
@@ -218,8 +215,17 @@ HINT
     # full-replace POST) for no added signal. Resumed sessions still reconcile.
     just_bootstrapped=1
   fi
-  # If bootstrap didn't produce a board.json, revert to the original silence.
-  [ -f "${board_path}" ] || exit 0
+  # #556 — mark onboarded ONLY after bootstrap actually produced a board.json.
+  # Writing the marker before this check (old order) stranded the user "onboarded
+  # but boardless" on a failed bootstrap: the picker never re-fired and every later
+  # session exited silently. No board.json → exit WITHOUT the marker, so the next
+  # session re-offers the picker.
+  if [ -f "${board_path}" ]; then
+    mkdir -p "${HOME}/.board-steward" 2>/dev/null
+    : > "${onboard_marker}"
+  else
+    exit 0
+  fi
 fi
 
 project_dir="$(dirname "$(dirname "${board_path}")")"
