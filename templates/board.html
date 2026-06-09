@@ -3188,6 +3188,7 @@ window.addEventListener('pagehide', flushSave);
 // field edit, force an immediate save (the server snapshots a numbered backup per
 // save), and log "Saved checkpoint" so there's a findable point to revert to —
 // either Cmd-Z in-session, or ask Claude to restore that backup later.
+let _lastCheckpointSig = null;
 document.addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
     e.preventDefault();
@@ -3195,6 +3196,13 @@ document.addEventListener('keydown', e => {
     if (document.activeElement && document.activeElement.blur) {
       try { document.activeElement.blur(); } catch (_) {}
     }
+    // #536 — DEDUPE (industry standard, like Docs/Figma): don't create a
+    // redundant checkpoint / log line / backup when nothing changed since the
+    // last one. Habitual Cmd+S on an unchanged board is a no-op — keeps the log
+    // clean and avoids churning the (capped) backup window with identical revs.
+    const sig = _snapState();
+    if (sig && sig === _lastCheckpointSig) { toast('✓ Already saved — no changes'); return; }
+    _lastCheckpointSig = sig;
     save('checkpoint');
     logEvent('save', 'Saved checkpoint');
     toast('✓ Checkpoint saved');
