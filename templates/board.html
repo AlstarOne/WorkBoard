@@ -6115,8 +6115,11 @@ function openCardMenu(card, x, y) {
   closeCardMenu();
   const menu = document.createElement('div');
   menu.className = 'card-menu';
-  // "Move to" — every column except the one the card is already in.
-  const others = state.columns.filter(c => c.id !== card.column);
+  // "Move to" — every column except the one the card is already in AND except
+  // Discarded (#539 — "Discard" below already sends it there; listing Discarded
+  // in Move-to too gave the user TWO ways to discard = "2 Discard").
+  const _isDiscCol = c => c.id === 'discarded' || /^discarded$/i.test(c.name || '');
+  const others = state.columns.filter(c => c.id !== card.column && !_isDiscCol(c));
   if (others.length) {
     const hdr = document.createElement('div');
     hdr.className = 'card-menu-hdr';
@@ -6138,6 +6141,16 @@ function openCardMenu(card, x, y) {
   del.textContent = isDiscarded(card) ? 'Delete permanently' : 'Discard';  // #358
   del.onclick = () => { closeCardMenu(); discardCard(card.id); };
   menu.appendChild(del);
+  // #539 — from a card already in Discarded, offer "Empty Discarded (N)" to clear
+  // the whole pile at once instead of deleting one at a time.
+  if (isDiscarded(card)) {
+    const n = state.cards.filter(c => _isDiscCol(state.columns.find(x => x.id === c.column) || {})).length;
+    const empty = document.createElement('button');
+    empty.className = 'card-menu-item card-menu-del';
+    empty.textContent = `Empty Discarded (${n})`;
+    empty.onclick = () => { closeCardMenu(); emptyDiscarded(); };
+    menu.appendChild(empty);
+  }
   document.body.appendChild(menu);
   // Position, clamped to the viewport (kebab sits at the far-right edge, so
   // the menu would otherwise overflow — pull it back on-screen).
@@ -6209,6 +6222,22 @@ async function discardCard(id) {
   }
   if (_openCardId === id) closeModal();
   moveCardToColumn(card, disc.id);
+}
+
+// #539 — purge the entire Discarded pile at once (undoable via Cmd-Z, same as a
+// single Delete permanently) so the user doesn't have to delete one at a time.
+async function emptyDiscarded() {
+  if (!state) return;
+  const disc = discardColumn();
+  if (!disc) return;
+  const n = state.cards.filter(c => c.column === disc.id).length;
+  if (!n) { toast('Discarded is already empty'); return; }
+  if (!(await miniConfirm('Empty Discarded?', { sub: `Permanently delete ${n} discarded card(s)` }))) return;
+  pushUndo();
+  state.cards = state.cards.filter(c => c.column !== disc.id);
+  scheduleSave();
+  render();
+  toast(`Emptied Discarded · ${n} deleted`);
 }
 
 // True when a card is sitting in the Discarded column (so UI can label its
