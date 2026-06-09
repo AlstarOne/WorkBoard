@@ -2217,7 +2217,10 @@ document.addEventListener('keyup', e => {
 });
 window.addEventListener('blur', () => document.body.classList.remove('cmd-pan-ready'));
 document.addEventListener('mousedown', e => {
-  if (e.button !== 0 || !_isPanModifier(e)) return;
+  if (!_isPanModifier(e)) return;
+  // #549 — accept the macOS Ctrl+left (reported as a right-click, button 2) so
+  // Ctrl+drag pans exactly like Cmd+drag; a normal left press (button 0) too.
+  if (e.button !== 0 && !(e.ctrlKey && e.button === 2)) return;
   const board = document.getElementById('board');
   if (!board) return;
   // Don't hijack presses on the floating HUDs, modals, or the trash zone.
@@ -2250,6 +2253,10 @@ document.addEventListener('mouseup', e => {
   // Swallow the trailing click so a pan never opens a card modal.
   if (moved) { e.preventDefault(); e.stopPropagation(); }
 }, true);
+// #549 — Ctrl is a pan modifier, but on macOS Ctrl+click also fires a contextmenu.
+// Suppress it while Ctrl is held so the pan isn't interrupted by the card menu.
+// (A plain right-click — no Ctrl — still opens the menu.)
+document.addEventListener('contextmenu', e => { if (e.ctrlKey) e.preventDefault(); }, true);
 
 // ===== Ctrl/Cmd + scroll to zoom the board (#523) =======================
 // Figma/browser-style zoom. Ctrl/Cmd + wheel scales #board via CSS `zoom`
@@ -3185,7 +3192,7 @@ document.addEventListener('keydown', e => {
       try { document.activeElement.blur(); } catch (_) {}
     }
     save('checkpoint');
-    logEvent('save', '💾 Saved checkpoint');
+    logEvent('save', 'Saved checkpoint');
     toast('✓ Checkpoint saved');
   }
 });
