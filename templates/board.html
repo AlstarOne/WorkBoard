@@ -5696,8 +5696,7 @@ function setActiveWorkForMove(cardId, fromCol, toCol) {
 }
 
 function applyActiveWorkTransition(cardId, fromCol, toCol) {
-  if (!state) return;
-  setActiveWorkForMove(cardId, fromCol, toCol);
+  setActiveWorkForMove(cardId, fromCol, toCol);   // both callees guard !state
   refreshActiveWork();
 }
 
@@ -5737,7 +5736,12 @@ function handleCardAdded({ card }) {
   // user might be on Calendar. Toast is fixed-position.
   if (card.meta && card.meta.autoCreated) showAutoCardToast(card);
   if (_view !== 'board') return;
-  if (isDragInProgress()) { _pendingResync = true; return; }   // #494 — defer DOM until drag ends
+  if (isDragInProgress()) {
+    // #503 — still update the (pure-state) active-work id so the deferred
+    // drag-end render() pulses/top-pins this card; only the DOM is deferred.
+    setActiveWorkForMove(card.id, null, card.column);
+    _pendingResync = true; return;   // #494 — defer DOM until drag ends
+  }
   if (findCardEl(card.id)) return;          // race with poll — already in DOM
 
   const col = findColumnEl(card.column);
@@ -5861,7 +5865,12 @@ function handleCardUpdated({ card, fromColumn, toColumn }) {
   if (idx >= 0) Object.assign(state.cards[idx], card);
   else { state.cards.push(card); }
   if (_view !== 'board') return;
-  if (isDragInProgress()) { _pendingResync = true; return; }   // #494 — defer DOM until drag ends
+  if (isDragInProgress()) {
+    // #503 — keep active-work id in sync (pure state) for an SSE move that
+    // lands mid-drag; the drag-end render() then pulses/top-pins correctly.
+    setActiveWorkForMove(card.id, fromColumn, toColumn);
+    _pendingResync = true; return;   // #494 — defer DOM until drag ends
+  }
 
   const oldEl = findCardEl(card.id);
   if (!oldEl) { handleCardAdded({ card }); return; }
