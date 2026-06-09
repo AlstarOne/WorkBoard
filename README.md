@@ -103,6 +103,22 @@ Prints a green/red dashboard checking, for every registered port:
 
 Exit code 0 only when all four pass. Add `--json` for machine-readable output.
 
+### Troubleshooting: reinstalled but `0 hooks` / board won't open
+
+If `/reload-plugins` reports `· 0 hooks ·`, the plugin installed but isn't
+**enabled** — Claude Code dropped `"board-steward@workboard": true` from
+`enabledPlugins` in `~/.claude/settings.json` (a known reinstall/marketplace-churn
+gotcha; the plugin can't self-enable). Run the install-doctor:
+
+```bash
+python3 ~/Desktop/WorkBoard/scripts/doctor.py        # diagnose
+python3 ~/Desktop/WorkBoard/scripts/doctor.py --fix   # auto re-add the enable entry
+```
+
+Then `/reload-plugins` (or restart) → expect 7 hooks. To avoid the gotcha on a
+reinstall, do a single `/plugin install board-steward@workboard` — skip the
+`marketplace remove`/`add` churn (that's what strips the enable entry).
+
 ## Why this exists
 
 Branching todos drop items. Item 1 spawns 1.1, which spawns 1.1.1, and item 5 gets forgotten three levels deep. The board makes the full tree always-visible (subtasks inside cards) and auto-updates as work moves Backlog → In Progress → Done with per-card write-ups Claude fills in when a task ships.
