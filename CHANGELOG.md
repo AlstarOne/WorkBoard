@@ -9,6 +9,22 @@ uses date-stamped pre-1.0 development entries until the first tagged release.
 
 Pre-release hardening toward `v1.0.0-rc.1`. Built across Plan v2 phases 0–6.
 
+### 0.9.21 — Per-session pulse + multi-session lost-update fix + adoption README (2026-06-10)
+- **Per-session active-work pulse (#608, `a6471a9`).** `activeWorkId` scalar → `activeWork`
+  map `{sessionId:{cardId,ts}}` so N concurrent sessions show N pulsing cards (max one per
+  session). Agent claims via `CLAUDE_CODE_SESSION_ID`; the browser never claims (adopts the
+  authoritative map from `rev-bumped`); self-heal + 12h TTL; legacy scalar migrates.
+- **Rev-as-CAS lost-update fix (#609, `f6b232a`).** Closes silent agent-vs-agent card loss:
+  `serve.py` enforces compare-and-swap on agent POSTs via `X-Board-Base-Rev` (re-checking the
+  on-disk rev so a drifted cache can't 409-storm a stuck board); `card.py` reloads + retries
+  (12× jittered backoff) on conflict instead of clobbering. Browser writes stay
+  last-writer-wins by design. Verified live: 12 parallel adds all land, stale write → 409.
+- **Adoption-focused README (#607/#563, `6124b98`).** Rewrote `README.md` as a benefit-first
+  pitch (claude-mem style); relocated dev/repo content to `docs/DEVELOPMENT.md`.
+- **Marketplace sync.** `marketplace.json` was stale at 0.9.13; bumped it and `plugin.json`
+  to 0.9.21. (Note: CHANGELOG entries for 0.9.15–0.9.20 were never backfilled — those bumps
+  live in commit messages only.)
+
 ### 0.9.14 — Multi-part carding LAW + decompose-before-IP guard (2026-06-06)
 Full record: `docs/SESSION_LOG_260606.md`.
 - **Codified the multi-part carding LAW (#476, `2d037cf`).** SKILL.md shape table is

@@ -2,7 +2,7 @@
 
 **A live kanban board your Claude Code agent keeps up to date for you — so you never lose an idea or a half-finished task.**
 
-![Version](https://img.shields.io/badge/version-0.9.20-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![For Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-8A2BE2)
+![Version](https://img.shields.io/badge/version-0.9.21-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![For Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-8A2BE2)
 
 <!-- Drop a screenshot or GIF of the live board here: docs/assets/board-screenshot.png -->
 <!-- ![The WorkBoard live board](docs/assets/board-screenshot.png) -->
