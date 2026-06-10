@@ -117,8 +117,10 @@ def build_parser():
     pu.add_argument("--priority", default=None, choices=["critical","mid","low"])
     pu.add_argument("--origin", default=None)
     pu.add_argument("--origin-stdin", action="store_true")
-    pu.add_argument("--notes", default=None)
+    pu.add_argument("--notes", default=None, help="REPLACE the notes field")
     pu.add_argument("--notes-stdin", action="store_true")
+    pu.add_argument("--note", metavar="TEXT", default=None,
+                    help="APPEND a line to notes (same as fly --note; use --notes to replace)")
     pu.add_argument("--writeup", default=None)
     pu.add_argument("--writeup-stdin", action="store_true")
     pu.add_argument("--add-tag", action="append", default=None)
@@ -405,8 +407,27 @@ def _log_verb_usage(args, board) -> None:
         pass
 
 
+def _hoist_board(argv):
+    """Pull `--board PATH` / `--board=PATH` out of anywhere in argv so it works
+    BEFORE or AFTER the subcommand. argparse treats --board as a global, so
+    `card.py fly 5 done --board X` would otherwise die with "unrecognized
+    arguments: --board" (the "Exit code 2" cascade). (#596)"""
+    board, out, i = None, [], 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--board" and i + 1 < len(argv):
+            board = argv[i + 1]; i += 2; continue
+        if a.startswith("--board="):
+            board = a.split("=", 1)[1]; i += 1; continue
+        out.append(a); i += 1
+    return board, out
+
+
 def main():
-    args = build_parser().parse_args()
+    hoisted, argv = _hoist_board(sys.argv[1:])
+    args = build_parser().parse_args(argv)
+    if hoisted and not args.board:
+        args.board = Path(hoisted)
     board = find_board(args.board)
 
     # If a server owns this board, writes funnel through it (POST) and the

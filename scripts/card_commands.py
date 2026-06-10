@@ -178,6 +178,15 @@ def cmd_update(args, d, board):
             c[field] = v
             changed.append(field)
 
+    # #596 — `update --note` APPENDS a line (matches `fly --note`), distinct
+    # from `--notes` which replaces. Resolves the "ambiguous option: --note"
+    # exit-2 from passing fly's flag to update.
+    note = getattr(args, "note", None)
+    if note:
+        existing = (c.get("notes") or "").rstrip()
+        c["notes"] = (existing + "\n" + note) if existing else note
+        changed.append("notes")
+
     for t in _check_tags(args.add_tag or [], d, getattr(args, "force", False)):
         c.setdefault("tags", [])
         if t not in c["tags"]:

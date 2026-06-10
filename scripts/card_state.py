@@ -50,7 +50,20 @@ def find_board(explicit: Path | None) -> Path:
         if cur.parent == cur:
             break
         cur = cur.parent
-    sys.exit("error: no board/board.json found at or above cwd (pass --board)")
+    # Fallback: the last-active board recorded in the registry, so running
+    # card.py from $HOME (the common case that produced the "Exit code 1"
+    # cascade) just works instead of erroring out. (#596)
+    try:
+        import port_registry
+        active = port_registry.get_active()
+        if active:
+            c = Path(active) / "board.json"
+            if c.is_file():
+                return c
+    except Exception:
+        pass
+    sys.exit("error: no board found at/above cwd and no active board registered.\n"
+             "       pass --board /path/to/board.json (works before OR after the subcommand).")
 
 
 # ===== state I/O =====
