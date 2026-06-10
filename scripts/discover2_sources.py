@@ -71,6 +71,34 @@ def files_from_tool_use(o: dict) -> list[tuple[str, str]]:
     return out
 
 
+# Review-coverage backfill (#599): an explicit review SKILL (/code-review etc.)
+# is a `Skill` tool_use in the transcript — NOT in git — so mining it here lets
+# the #598 ledger be accurate from install even for no-git users. Mirrors
+# card_commands._REVIEW_SKILLS; ambient code-reading is NOT a review.
+REVIEW_SKILLS = {"code-review", "security-review", "simplify", "review", "ultrareview"}
+
+
+def review_skills_from_tool_use(o: dict) -> list[str]:
+    """Names of review SKILLS invoked in this assistant turn (namespace-stripped).
+    A `Skill` tool_use whose input.skill (e.g. 'plugin:code-review') resolves to a
+    name in REVIEW_SKILLS. [] when none — files_from_tool_use drops Skill, so this
+    is the dedicated detector."""
+    out: list[str] = []
+    msg = o.get("message") or {}
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return out
+    for c in content:
+        if not isinstance(c, dict) or c.get("type") != "tool_use":
+            continue
+        if c.get("name") != "Skill":
+            continue
+        skill = ((c.get("input") or {}).get("skill") or "").split(":")[-1].strip()
+        if skill in REVIEW_SKILLS:
+            out.append(skill)
+    return out
+
+
 # ---------- sources ----------
 
 def harvest_jsonl(since: datetime | None) -> list[dict]:
@@ -115,7 +143,8 @@ def harvest_jsonl(since: datetime | None) -> list[dict]:
                             "text": txt[:2000],
                             "files": [p for _, p in tu],
                             "meta": {"sessionId": jpath.stem, "cwd": cwd,
-                                     "tools": [n for n, _ in tu]},
+                                     "tools": [n for n, _ in tu],
+                                     "review_skills": review_skills_from_tool_use(o)},
                         })
         except OSError:
             continue
@@ -320,6 +349,7 @@ def harvest_git(project: Path, since: datetime | None) -> list[dict]:
 
 __all__ = [
     "parse_ts", "msg_text", "files_from_tool_use",
+    "REVIEW_SKILLS", "review_skills_from_tool_use",
     "harvest_jsonl", "harvest_memory", "harvest_plans", "harvest_history",
     "harvest_convo", "harvest_git",
 ]

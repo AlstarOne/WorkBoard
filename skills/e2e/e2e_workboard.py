@@ -278,12 +278,80 @@ def test_recon_haiku_e2e(ctx: Ctx):
     os.environ.pop("BOARD_NO_SERVER", None)
 
 
+# ─────────────────── review-coverage backfill tests (free, #599) ───────────────────
+
+def test_review_backfill_detect_extract(ctx: Ctx):
+    """#599 — a /code-review SKILL in a turn is detected (namespace-stripped) and
+    rides discover2 bucketing into the task record's `reviewed` field; a turn with
+    no review skill stays unmarked (back-compat)."""
+    import discover2_sources as S, discover2_extract as X
+    # detector strips 'plugin:' and filters to review skills only
+    o = {"message": {"content": [
+        {"type": "tool_use", "name": "Skill", "input": {"skill": "plugin:code-review"}},
+        {"type": "tool_use", "name": "Skill", "input": {"skill": "frontend-design"}},
+    ]}}
+    ctx.assert_eq("review.detect: namespace-strip + filter",
+                  S.review_skills_from_tool_use(o), ["code-review"])
+    # extraction: review skill in the task's own turns → record.reviewed
+    t0 = datetime(2026, 6, 1, 10, 0, 0, tzinfo=timezone.utc)
+    evs = [
+        {"ts": t0, "source": "jsonl", "kind": "user_prompt",
+         "text": "review the card-drag freeze fix please", "files": [], "meta": {"cwd": "/p"}},
+        {"ts": t0 + timedelta(seconds=30), "source": "jsonl", "kind": "asst_msg",
+         "text": "running review", "files": ["/p/board.html"],
+         "meta": {"tools": ["Skill"], "review_skills": ["code-review"]}},
+    ]
+    rec = X.task_to_record(X.extract_tasks(evs, 30, Path("/p"))[0], Path("/p"))
+    ctx.assert_eq("review.extract: reviewed skill carried",
+                  (rec.get("reviewed") or {}).get("skill"), "code-review")
+    # back-compat: no review skill → reviewed is None
+    evs2 = [
+        {"ts": t0, "source": "jsonl", "kind": "user_prompt",
+         "text": "build the thing for me right now please", "files": [], "meta": {"cwd": "/p"}},
+        {"ts": t0 + timedelta(seconds=30), "source": "jsonl", "kind": "asst_msg",
+         "text": "built", "files": ["/p/x.py"], "meta": {"tools": ["Edit"]}},
+    ]
+    rec2 = X.task_to_record(X.extract_tasks(evs2, 30, Path("/p"))[0], Path("/p"))
+    ctx.assert_eq("review.extract: no-review → None", rec2.get("reviewed"), None)
+
+
+def test_review_backfill_emit_stamp(ctx: Ctx):
+    """#599 — emit_card stamps a mined card carrying `reviewed` via the shipped
+    `card.py review` mechanism (reviewed tag + reviewedAt + 🔍 subtask); a card
+    with no review stays in the pending-review coverage gap."""
+    os.environ["BOARD_NO_SERVER"] = "1"
+    import importlib, hourly_emit as E, card_commands as CC
+    importlib.reload(E)
+    bj = ctx.board([])
+    reviewed_card = {"title": "Card-drag freeze fix", "column": "done", "priority": "mid",
+                     "notes": "fixed the freeze", "reviewed": {"skill": "plugin:code-review"},
+                     "_bucket_ts_iso": "2026-06-01T10:00:00+00:00"}
+    plain_card = {"title": "Unrelated chore bump", "column": "done", "priority": "low",
+                  "notes": "bumped version"}
+    n1 = E.emit_card(CARD_PY, bj, reviewed_card, show_lifecycle=True, pace_s=0.0)
+    n2 = E.emit_card(CARD_PY, bj, plain_card, show_lifecycle=True, pace_s=0.0)
+    cards = {c["num"]: c for c in json.loads(bj.read_text())["cards"]}
+    c1, c2 = cards.get(n1, {}), cards.get(n2, {})
+    ctx.assert_true("review.emit: reviewed tag stamped", "reviewed" in (c1.get("tags") or []))
+    ctx.assert_eq("review.emit: reviewedAt set", c1.get("reviewedAt"),
+                  "2026-06-01T10:00:00+00:00")
+    ctx.assert_true("review.emit: findings=[bootstrap]",
+                    any(r.get("findings") == "[bootstrap]" for r in (c1.get("reviews") or [])))
+    ctx.assert_true("review.emit: 🔍 subtask added",
+                    any("🔍" in s.get("text", "") for s in (c1.get("subtasks") or [])))
+    # coverage ledger: plain card is the gap, reviewed card is NOT
+    ctx.assert_true("review.emit: plain card is pending-review", CC._is_pending_review(c2))
+    ctx.assert_eq("review.emit: reviewed card not pending", CC._is_pending_review(c1), False)
+    os.environ.pop("BOARD_NO_SERVER", None)
+
+
 # ───────────────────────── runner ─────────────────────────
 
 GROUPS = {
     "multiboard": [test_multiboard_routing_isolation, test_multiboard_disambiguation],
     "recon": [test_recon_only_discovered_flag, test_recon_gates_short_circuit,
               test_recon_replay_gate, test_recon_claudecode_path],
+    "review-backfill": [test_review_backfill_detect_extract, test_review_backfill_emit_stamp],
     "recon-haiku": [test_recon_haiku_e2e],
 }
 
@@ -300,7 +368,7 @@ def main(argv: list[str]) -> int:
 
     selected: list = []
     if group == "all":
-        selected = GROUPS["multiboard"] + GROUPS["recon"]
+        selected = GROUPS["multiboard"] + GROUPS["recon"] + GROUPS["review-backfill"]
         if "--haiku" in flags:
             selected += GROUPS["recon-haiku"]
     elif group in GROUPS:

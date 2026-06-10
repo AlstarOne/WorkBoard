@@ -96,6 +96,10 @@ def build_digest(bucket_events: list[dict], project: Path,
             if files:
                 fnames = ", ".join(Path(f).name for f in files[:5])
                 lines.append(f"  [{ts}] CLAUDE edited: {fnames}")
+            # #599: surface an explicit review SKILL so the LLM can attribute the
+            # review to the card these turns become (review-coverage backfill).
+            for rs in (ev.get("meta") or {}).get("review_skills") or []:
+                lines.append(f"  [{ts}] REVIEW: /{rs}")
             # #321: drop the assistant prose head (redundant w/ git) by default;
             # legacy path keeps just the truncated head.
             if not _DROP_ASST_PROSE:
@@ -189,7 +193,8 @@ Output: a JSON ARRAY of card objects. Each card:
   "notes": "What the work actually was: problem → approach → outcome (or current state). 1-3 sentences, ≤300 chars. Concrete — name the file/function/command. If a COMMIT line (a sha) for this work appears in the bucket log, ALWAYS cite its short sha, e.g. 'Shipped in 7b565ff.' For UNFINISHED work, state what's left. Empty string only if no signal.",
   "tags": ["one or two from: feature | bug | fix | refactor | doc | design | discipline | infrastructure"],
   "subtasks": "OPTIONAL array decomposing a MULTI-PART card into its parts — exactly ONE entry per ` + ` segment in the title, in the same order, each a concise fuller-detail phrase (≤120 chars, not a repeat of the title). This is what makes a mined card match a LIVE-carded one ('each part is also a subtask'). Use it ONLY when the title bundles parts; for genuinely single-part work return [] — do NOT invent subtasks (that over-splits). ≤4 entries. For a long grouped list an entry may be {\"text\": \"<group name>\", \"children\": [\"<item>\", …]} (ONE nesting level).",
-  "transitions": "OPTIONAL ordered array of EXTRA lifecycle hops AFTER the first ship — reconstruct the TRUE path the card took, but ONLY when the digest explicitly shows it. Each entry: {\"to\": \"inprogress\"|\"done\", \"kind\": \"bug\"|\"improve\"|null, \"reason\": \"short text ≤80 chars\"}. kind 'bug' = the shipped card BROKE (regression/revert/reopen in the log) and flew back to In Progress to be fixed; 'improve' = an enhancement after ship. A reopen is normally followed by a {\"to\":\"done\"} hop. OMIT or [] for the normal task→IP→done (most cards). NEVER invent a bug cycle the digest doesn't show."
+  "transitions": "OPTIONAL ordered array of EXTRA lifecycle hops AFTER the first ship — reconstruct the TRUE path the card took, but ONLY when the digest explicitly shows it. Each entry: {\"to\": \"inprogress\"|\"done\", \"kind\": \"bug\"|\"improve\"|null, \"reason\": \"short text ≤80 chars\"}. kind 'bug' = the shipped card BROKE (regression/revert/reopen in the log) and flew back to In Progress to be fixed; 'improve' = an enhancement after ship. A reopen is normally followed by a {\"to\":\"done\"} hop. OMIT or [] for the normal task→IP→done (most cards). NEVER invent a bug cycle the digest doesn't show.",
+  "reviewed": "OPTIONAL {\"skill\": \"<review-skill>\"} — set ONLY when a REVIEW line (e.g. 'REVIEW: /code-review') appears among THIS card's turns, meaning an explicit review skill ran on this card's work. skill is the name on that line (code-review | security-review | simplify | review | ultrareview). The review belongs to the card whose work was reviewed — if a bucket has several cards, attach it to the one those turns built. OMIT entirely otherwise. NEVER invent a review the digest doesn't show; ambient code-reading is NOT a review."
 }
 
 Column routing rules:

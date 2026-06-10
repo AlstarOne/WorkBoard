@@ -205,6 +205,35 @@ def _card_subtask_done(card_py: Path, board: Path, num: int, sid: str) -> bool:
     return out.returncode == 0
 
 
+def _card_review(card_py: Path, board: Path, num: int, skill: str,
+                 at: str | None = None) -> bool:
+    """Stamp a mined card as code-reviewed (#599 backfill) via the SHIPPED #598
+    `card.py review` mechanism — reviewed tag + reviewedAt + 🔍 subtask. The
+    review skill was detected in the very turns that became this card, so this is
+    attribution, not fuzzy matching. --sha "" is honest: the bootstrap HEAD is not
+    the reviewed sha. Best-effort — a bad stamp must never break the fill."""
+    skill = (skill or "").split(":")[-1].strip()
+    if not skill:
+        return False
+    args = [sys.executable, str(card_py), "--board", str(board), "review",
+            str(num), "--skill", skill, "--sha", "", "--findings", "[bootstrap]"]
+    if at:
+        args += ["--at", at]
+    try:
+        out = subprocess.run(args, capture_output=True, text=True, timeout=8)
+    except subprocess.SubprocessError:
+        return False
+    return out.returncode == 0
+
+
+def _maybe_review(card_py: Path, board: Path, num: int, card: dict) -> None:
+    """If the mined card carries a `reviewed` attribution, stamp it (#599)."""
+    rv = card.get("reviewed")
+    skill = rv.get("skill") if isinstance(rv, dict) else None
+    if skill:
+        _card_review(card_py, board, num, skill, card.get("_bucket_ts_iso"))
+
+
 def _card_fly(card_py: Path, board: Path, num: int, col: str,
               writeup: str | None = None, bug: str | None = None,
               improve: str | None = None, subtask: str | None = None) -> bool:
@@ -301,6 +330,7 @@ def emit_card(card_py: Path, board: Path, card: dict,
             _card_fly(card_py, board, num, "backlog")
         else:  # inprogress
             _card_fly(card_py, board, num, "inprogress")
+        _maybe_review(card_py, board, num, card)   # #599 review-coverage backfill
         return num
     else:
         num = _card_add(card_py, board, card)
@@ -310,11 +340,13 @@ def emit_card(card_py: Path, board: Path, card: dict,
         # the same way; tick done only when it's a done card.
         _emit_subtasks(card_py, board, num, subtasks,
                        mark_done=(final_col == "done"))
+        _maybe_review(card_py, board, num, card)   # #599 review-coverage backfill
         return num
 
 
 
 __all__ = [
     "_banner_update_text", "_banner_create", "_banner_update", "_banner_finish",
-    "_emit_progress", "_card_add", "_card_fly", "_replay_transitions", "emit_card",
+    "_emit_progress", "_card_add", "_card_fly", "_card_review", "_maybe_review",
+    "_replay_transitions", "emit_card",
 ]

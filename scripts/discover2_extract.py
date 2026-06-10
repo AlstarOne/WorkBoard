@@ -282,6 +282,7 @@ def _attach_context(tasks: list[dict], events: list[dict],
         t["memory_writes"] = []
         t["plan_refs"] = []
         t["git_commits"] = []
+        t["review_skills"] = []   # #599: review SKILLs seen in this task's turns
         t["lifecycle"] = {
             "prompt_ts": t["ts_start"],
             "first_edit_ts": None,
@@ -318,6 +319,10 @@ def _attach_context(tasks: list[dict], events: list[dict],
         # tools
         for tool in (ev.get("meta") or {}).get("tools", []) or []:
             owner["tool_calls"][tool] = owner["tool_calls"].get(tool, 0) + 1
+        # review skills (#599) — an explicit /code-review etc. in this task's turns
+        for rs in (ev.get("meta") or {}).get("review_skills", []) or []:
+            if rs not in owner["review_skills"]:
+                owner["review_skills"].append(rs)
         # ship / bug / defer denoising
         if ev["kind"] == "asst_msg":
             text = ev["text"]
@@ -390,6 +395,11 @@ def task_to_record(t: dict, project: Path) -> dict:
     pp = project.resolve()
     src = sorted(t["source_set"])
     urgency = _detect_urgency(t)
+    # #599: a review SKILL inside this task's turns → review-coverage backfill.
+    # The review event fell in the task window, so attribution is clean.
+    reviews = t.get("review_skills") or []
+    reviewed = ({"skill": reviews[0], "at": t["ts_end"].isoformat()}
+                if reviews else None)
     return {
         "ts_start": t["ts_start"].isoformat(),
         "ts_end": t["ts_end"].isoformat(),
@@ -414,6 +424,7 @@ def task_to_record(t: dict, project: Path) -> dict:
         "parent_prompt": t.get("parent_prompt"),
         "cwd": (t.get("meta_seed") or {}).get("cwd"),
         "sessionId": (t.get("meta_seed") or {}).get("sessionId"),
+        "reviewed": reviewed,
     }
 
 

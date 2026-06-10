@@ -374,20 +374,36 @@ def _stream_discovered_cards(project_root: Path, board_dir: Path,
     if not items:
         return
 
+    board_json = board_dir / "board.json"
     n_added = 0
     for item in items[:max_items]:
         args = mapper(item)
         if not args:
             continue
         try:
-            subprocess.run(
+            out = subprocess.run(
                 [sys.executable, str(card_py), "--board",
-                 str(board_dir / "board.json"), "add"] + args,
+                 str(board_json), "add"] + args,
                 capture_output=True, text=True, timeout=10,
             )
             n_added += 1
         except Exception:
-            pass
+            out = None
+        # #599: backfill the review-coverage stamp if this task carried a review
+        # SKILL in its turns. discover2 task records only (legacy has no field).
+        rv = item.get("reviewed") if isinstance(item, dict) else None
+        if out is not None and out.returncode == 0 and isinstance(rv, dict) and rv.get("skill"):
+            m = re.search(r"#(\d+)", out.stdout)
+            if m:
+                cmd = [sys.executable, str(card_py), "--board", str(board_json),
+                       "review", m.group(1), "--skill", str(rv["skill"]),
+                       "--sha", "", "--findings", "[bootstrap]"]
+                if rv.get("at"):
+                    cmd += ["--at", str(rv["at"])]
+                try:
+                    subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                except Exception:
+                    pass
         time.sleep(delay_s)
 
     print(f"discover{'(legacy)' if legacy else '2'}: streamed {n_added} card(s) "
