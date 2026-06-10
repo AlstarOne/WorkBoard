@@ -2043,7 +2043,14 @@ function _renderLogLine(entry) {
   const viaPrefix = entry.via && VIA_LABEL[entry.via]
     ? `<span style="color:${VIA_COLOR[entry.via] || '#a09ab8'};">(${VIA_LABEL[entry.via]})</span> ` : '';
   const line = document.createElement('div');
-  line.innerHTML = `<span style="color:#777;">${entry.t}</span> <span style="color:${color};">${String(entry.kind).toUpperCase().padEnd(6, ' ')}</span> ${viaPrefix}${esc(entry.summary)}${tagSuffix}`;
+  // #580 — the checkpoint ('save') line is self-describing ("Saved checkpoint"),
+  // so the leading SAVE kind-badge just doubles the word. Omit the badge for
+  // save lines; the summary alone reads cleanly. (User: "when Saved Checkpoint,
+  // dont want SAVE. just Saved Checkpoint is fine.") All other kinds keep theirs.
+  const kindSpan = entry.kind === 'save'
+    ? ''
+    : `<span style="color:${color};">${String(entry.kind).toUpperCase().padEnd(6, ' ')}</span> `;
+  line.innerHTML = `<span style="color:#777;">${entry.t}</span> ${kindSpan}${viaPrefix}${esc(entry.summary)}${tagSuffix}`;
   body.insertBefore(line, body.firstChild);
   while (body.childNodes.length > _LOGS_BUF_MAX) body.removeChild(body.lastChild);
 }
@@ -2684,6 +2691,16 @@ function commitCardDrag() {
   if (targetCol === 'done' && !card.doneAt) card.doneAt = card.updatedAt;
   if (targetCol !== 'done') card.doneAt = null;
   recordMove(card, _cardDrag.srcCol, targetCol);   // #258 movement history
+  // #578 — log the drag move NOW, for a real column change. Drags normally log
+  // via the SSE echo (handleCardUpdated), but a FAST successive drag makes that
+  // echo arrive while the NEXT drag is in progress, where handleCardUpdated bails
+  // (isDragInProgress → defer & return) BEFORE the logEvent — so rapid moves
+  // never showed in the Logs HUD. Log directly (via=user) like moveCardToColumn,
+  // and set the dedupe marker so the echo (if it later processes) won't re-log.
+  if (_cardDrag.srcCol && _cardDrag.srcCol !== targetCol) {
+    logEvent('move', `#${card.num} ${colLabel(_cardDrag.srcCol)} → ${colLabel(targetCol)}`, card, 'user');
+    _localMoveLog.set(card.id, Date.now());
+  }
   // #254 — active-work follows a live MOVE into In Progress (persisted via the
   // scheduleSave() below, so it survives refresh). Parked cards never light up.
   setActiveWorkForMove(card.id, _cardDrag.srcCol, targetCol);   // #503 — shared rule
@@ -3316,6 +3333,20 @@ function isUserEditing() {
   const a = document.activeElement;
   return a && (a.isContentEditable || a.tagName === 'TEXTAREA' || a.tagName === 'INPUT');
 }
+// #555 — plain Ctrl/Cmd+A on the board (not in a text field) fired the browser's
+// native "select all", highlighting every card's text with no easy way to clear
+// it: the card drag handlers swallow the mousedown that normally deselects, so
+// the user had to click OUTSIDE the board. Suppress select-all when not editing,
+// and clear any stray selection. Inside an input/textarea/contenteditable, Ctrl+A
+// keeps its normal select-all-the-text behaviour. Capture phase so we reliably
+// beat the default.
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A') && !isUserEditing()) {
+    e.preventDefault();
+    const sel = window.getSelection && window.getSelection();
+    if (sel && sel.removeAllRanges) sel.removeAllRanges();
+  }
+}, true);
 let _pollTick = 0;
 function startPoll() {
   if (pollTimer) clearInterval(pollTimer);
@@ -4448,6 +4479,15 @@ function render() {
   // open, reconnect-via-poll, inline install before connect).
   playEntrance();
   _restoreScroll(_scroll);   // #345 — put each column back where the user had it
+  // #581/#564 — the green poll-flash is ONE-SHOT. This render has now applied
+  // .flashing to every id in _flashIds (renderCardCompact), so consume the set:
+  // otherwise a LATER local render (open/close a card, swap a column, add a card,
+  // or MOVE a card into In-Progress — all call render() but NOT
+  // detectChangesAndSnapshot) re-flashes those STALE ids, making unrelated/just-
+  // moved cards "pulse again." The next poll's detectChangesAndSnapshot
+  // repopulates _flashIds for genuinely-changed cards. (Re-applies the one-shot
+  // fix that the #564 revert removed; #546 active-work anchoring is unaffected.)
+  _flashIds = new Set();
 }
 
 // ===== #313 first-load entrance animation =====
@@ -5929,6 +5969,21 @@ function handleSessionDivider({ label } = {}) {
   if (typeof logEvent === 'function') logEvent('divider', label || 'session refresh');
 }
 
+// #557 — keep the Calendar view LIVE. handleCardAdded/Updated used to bail when
+// _view !== 'board', so a remote (SSE: Claude/CLI/another tab) add or move only
+// appeared on the calendar after a manual view switch — the "main board ↔
+// calendar doesn't sync" bug. Re-render the calendar on such events, coalesced
+// via rAF so a burst (e.g. a bootstrap fill) collapses to one re-render/frame.
+let _calRenderPending = false;
+function _refreshCalendarSoon() {
+  if (_view !== 'calendar' || _calRenderPending) return;
+  _calRenderPending = true;
+  requestAnimationFrame(() => {
+    _calRenderPending = false;
+    if (_view === 'calendar') render();
+  });
+}
+
 function handleCardAdded({ card }) {
   if (!state) return;
   const existing = state.cards.find(c => c.id === card.id);
@@ -5937,7 +5992,7 @@ function handleCardAdded({ card }) {
   // Auto-card (#100): pop the rich Undo toast even if board view isn't active —
   // user might be on Calendar. Toast is fixed-position.
   if (card.meta && card.meta.autoCreated) showAutoCardToast(card);
-  if (_view !== 'board') return;
+  if (_view !== 'board') { _refreshCalendarSoon(); return; }   // #557 live calendar
   if (isDragInProgress()) {
     // #503 — still update the (pure-state) active-work id so the deferred
     // drag-end render() pulses/top-pins this card; only the DOM is deferred.
@@ -6070,7 +6125,7 @@ function handleCardUpdated({ card, fromColumn, toColumn }) {
   const idx = state.cards.findIndex(c => c.id === card.id);
   if (idx >= 0) Object.assign(state.cards[idx], card);
   else { state.cards.push(card); }
-  if (_view !== 'board') return;
+  if (_view !== 'board') { _refreshCalendarSoon(); return; }   // #557 live calendar
   if (isDragInProgress()) {
     // #503 — keep active-work id in sync (pure state) for an SSE move that
     // lands mid-drag; the drag-end render() then pulses/top-pins correctly.
