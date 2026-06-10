@@ -4560,24 +4560,14 @@ function playEntrance() {
 // render() filters per column preserving array order, so one global sort makes
 // every column newest-first; it still floats the active-work card to the top of
 // In Progress over this base order.
-function _sortOnceKey() {
-  const bid = (state && (state.id || state.title)) || location.pathname || 'board';
-  return 'wb:sorted-once::' + bid;
-}
 function _cardSortTs(c) {
   const v = c && (c.createdAt || c.created_at);
   const t = v ? Date.parse(v) : NaN;
   return isNaN(t) ? 0 : t;
 }
-function sortAllColumnsOnceAfterFill() {
-  if (!state || !Array.isArray(state.cards)) return;
-  let key = 'wb:sorted-once';
-  try { key = _sortOnceKey(); if (localStorage.getItem(key)) return; } catch (_) {}
-  state.cards.sort((a, b) => _cardSortTs(b) - _cardSortTs(a) || (b.num || 0) - (a.num || 0));
-  scheduleSave();
-  if (_view === 'board') render();
-  try { localStorage.setItem(key, '1'); } catch (_) {}   // one-shot, forever
-}
+// #601 — sortAllColumnsOnceAfterFill (the silent one-shot snap-sort) retired:
+// bootstrap now uses flipResort (the animated ⇅ Sort Time glide) everywhere, so
+// the cheap localStorage-guarded variant + its _sortOnceKey helper are gone.
 
 // ===== Tag colour + taxonomy lookup =====
 // Single source of truth for "what colour is this tag" used by card chips,
@@ -6584,17 +6574,13 @@ function startSSE() {
       // it hands off to the next stage on the SAME HUD (no flash/disappear/race).
       if (d.final) {
         BoardLoadHUD.done(d.label, d.phase);
-        // #92 — ONLY during bootstrap, ONLY after the reconcile finishes: glide
-        // every card into time order (flipResort, FLIP animation). A standalone
-        // live recon (no preceding fill) keeps the cheap one-time snap-sort.
+        // #92/#601 — after bootstrap fill (and after reconcile, if any): glide
+        // every card into time order with the SAME animated FLIP sort as the
+        // ⇅ Sort Time button (flipResort). One unified effect — no silent snap.
         if (d.phase === 'reconcile' && _bootstrapFillSeen) {
           _bootstrapFillSeen = false;
-          setTimeout(flipResort, 600);
-        } else {
-          // #101 — fill fully done; let the last card writes apply, then run the
-          // one-time newest-on-top sort across all columns (self-guards to once).
-          setTimeout(sortAllColumnsOnceAfterFill, 600);
         }
+        setTimeout(flipResort, 600);
       } else if (d.total > 0 && d.done >= d.total) {
         // Stage reached 100% but isn't final → advance the header to the next
         // stage and stay visible. replay→speedup, speedup/solo→reconcile.
@@ -6603,7 +6589,7 @@ function startSSE() {
         else {
           // inline ('') / unknown terminal with no reconcile to follow — complete.
           BoardLoadHUD.done(d.label, d.phase);
-          setTimeout(sortAllColumnsOnceAfterFill, 600);
+          setTimeout(flipResort, 600);   // #601 — same animated sort everywhere
         }
       } else BoardLoadHUD.update(d.done || 0, d.total || 0, d.label || '', d.phase || '');
     } catch (_) {}
