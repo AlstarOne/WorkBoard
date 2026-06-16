@@ -6710,14 +6710,25 @@ function startSSE() {
       // "done>=total" — a stage hitting 100% (replay/speedup/solo) is NOT the end,
       // it hands off to the next stage on the SAME HUD (no flash/disappear/race).
       if (d.final) {
-        BoardLoadHUD.done(d.label, d.phase);
         // #92/#601 — after bootstrap fill (and after reconcile, if any): glide
         // every card into time order with the SAME animated FLIP sort as the
         // ⇅ Sort Time button (flipResort). One unified effect — no silent snap.
         if (d.phase === 'reconcile' && _bootstrapFillSeen) {
+          // #157 — this is the END of the whole bootstrap (reconcile + declutter).
+          // SORT FIRST so the 🧹 First-run sweep header settles above its swept
+          // cards (during the live one-by-one declutter the header sinks as cards
+          // glide in on top of it; only a time-sort puts it back). THEN show the
+          // ✓ COMPLETE HUD once sorting has glided into place — so final_hud is the
+          // true last step. By the time this `final` event arrives, SSE ordering
+          // guarantees every declutter card-move is already in the DOM.
           _bootstrapFillSeen = false;
+          flipResort();
+          setTimeout(() => BoardLoadHUD.done(d.label, d.phase), 750);  // ✓ after the sort settles
+        } else {
+          // Standalone recon / inline (no bootstrap fill): complete, then sort.
+          BoardLoadHUD.done(d.label, d.phase);
+          setTimeout(flipResort, 600);
         }
-        setTimeout(flipResort, 600);
       } else if (d.total > 0 && d.done >= d.total) {
         // Stage reached 100% but isn't final → advance the header to the next
         // stage and stay visible. replay→speedup, speedup/solo→reconcile.
