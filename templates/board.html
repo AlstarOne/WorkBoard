@@ -3279,8 +3279,28 @@ function pushUndo() {
   if (_undoStack.length > _UNDO_CAP) _undoStack.shift();
   _redoStack.length = 0;
 }
-function undo() {
+// #610 — undo/redo restore a whole-state snapshot and POST it last-writer-wins
+// (browser stays LWW by design, #609). If another session advanced the board since
+// we last synced, applying the snapshot silently clobbers their work. Light-touch
+// guard: probe the cheap /rev BEFORE restoring; if it moved past our lastRev, confirm
+// (default = cancel). Probe failure → proceed (never block undo when /rev is down).
+async function _confirmRestoreIfBoardMoved(action) {
+  try {
+    const r = await fetch(REV_URL, { cache: 'no-store' });
+    if (r.ok) {
+      const j = await r.json();
+      if ((j.rev || 0) !== lastRev) {
+        return window.confirm(
+          'Board changed in another session — ' + action +
+          ' may overwrite their work. Proceed?');
+      }
+    }
+  } catch (_) { /* /rev down → don't block undo */ }
+  return true;
+}
+async function undo() {
   if (!_undoStack.length) { toast('Nothing to undo'); return; }
+  if (!(await _confirmRestoreIfBoardMoved('undo'))) return;   // #610
   // Blur any focused editor so its post-edit state isn't re-committed onto
   // the restored snapshot.
   if (document.activeElement && document.activeElement.blur) {
@@ -3317,8 +3337,9 @@ function _tagRestoreMoves(snap, via) {
     return JSON.stringify(o);
   } catch (_) { return snap; }
 }
-function redo() {
+async function redo() {
   if (!_redoStack.length) { toast('Nothing to redo'); return; }
+  if (!(await _confirmRestoreIfBoardMoved('redo'))) return;   // #610
   if (document.activeElement && document.activeElement.blur) {
     try { document.activeElement.blur(); } catch (_) {}
   }
