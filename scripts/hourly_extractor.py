@@ -677,7 +677,8 @@ def _extract_haiku(project: Path, board: Path, card_py: Path,
                    days: int, date_filter: str | None,
                    show_lifecycle: bool, pace_s: float,
                    reconcile: bool, phase: str = "",
-                   will_reconcile: bool = False) -> None:
+                   will_reconcile: bool = False,
+                   cards_offset: int = 0) -> int:
     """HAIKU mode: parallel per-chunk extraction → emit cards as chunks finish,
     snapshot the result, then reconcile. The autonomous (costs-Haiku) path.
     phase (#327) tags the HUD: 'replay' (tier-1) / 'speedup' (tier-2) / 'solo'.
@@ -685,7 +686,13 @@ def _extract_haiku(project: Path, board: Path, card_py: Path,
     `will_reconcile` (#recon-handoff): True when a reconcile sweep runs AFTER
     this window (the tier-fly path runs recon outside the window, so this window
     is told `reconcile=False` yet must NOT flash '✓ COMPLETE' — it has to hand
-    off to the reconcile stage on the same HUD)."""
+    off to the reconcile stage on the same HUD).
+
+    `cards_offset` (#hud-cumulative): cards already emitted by EARLIER tiers of
+    the same fly-in. The HUD's "N cards emitted so far" line adds it so the
+    count CARRIES OVER across the tier-1→tier-2 boundary instead of resetting to
+    0 ('speeding up' must continue from the replay tier's total, not restart).
+    Returns this window's own emitted count so the caller can accumulate it."""
     t0 = time.monotonic()
     # Progress banner: a single 'notes' card the user can watch update live.
     banner_num = _banner_create(card_py, board, len(chunks), phase)
@@ -745,7 +752,7 @@ def _extract_haiku(project: Path, board: Path, card_py: Path,
             is_final = (completed == len(chunks) and not reconcile
                         and not will_reconcile and phase != "replay")
             _banner_update(card_py, board, banner_num,
-                           completed, len(chunks), n_cards,
+                           completed, len(chunks), cards_offset + n_cards,
                            phase=phase, label_override=handoff, final=is_final)
 
     # Save snapshot of post-extraction state BEFORE reconciliation, so
@@ -771,6 +778,7 @@ def _extract_haiku(project: Path, board: Path, card_py: Path,
     print(f"✓ emitted {n_cards} card(s) across {len(sorted_buckets)} bucket(s) "
           f"in {len(chunks)} chunk(s); recon moved {n_moved} card(s)",
           file=sys.stderr)
+    return n_cards
 
 
 def _run_window(project: Path, board: Path, card_py: Path, *,
@@ -779,21 +787,25 @@ def _run_window(project: Path, board: Path, card_py: Path, *,
                 sources, date_filter, bucket_min: int, recent_first: bool,
                 max_buckets: int, chunk_size: int, workers: int,
                 reconcile: bool, mode: str,
-                will_reconcile: bool = False) -> None:
+                will_reconcile: bool = False, cards_offset: int = 0) -> int:
     """Extract ONE history window: events → filter → bucketize → emit. The
     reusable unit behind BOTH the single-pass fill and the #327 two-tier fly,
     so tiering has one source of truth (no duplicate orchestration in bash).
 
     `will_reconcile` is forwarded to `_extract_haiku` so the LAST tier of a
-    tier-fly hands off to the reconcile stage instead of flashing '✓ COMPLETE'."""
+    tier-fly hands off to the reconcile stage instead of flashing '✓ COMPLETE'.
+
+    `cards_offset` is forwarded so the HUD card-count carries across tiers;
+    returns this window's emitted count (0 if nothing extracted) so the tier-fly
+    can accumulate it into the next tier's offset."""
     events = _flatten_events(project, days, sources=sources)
     if not events:
         print(f"no events to extract (phase={phase or '-'})", file=sys.stderr)
-        return
+        return 0
     events = _filter_events(events, project, date_filter, end_days_ago,
                             seed_if_empty=seed_if_empty)
     if events is None:
-        return
+        return 0
     sorted_buckets, buckets, chunks = _bucketize(
         events, bucket_min, recent_first, max_buckets, chunk_size)
     print(f"▶ hourly extraction [{phase or 'single'}]: {len(sorted_buckets)} "
@@ -805,11 +817,13 @@ def _run_window(project: Path, board: Path, card_py: Path, *,
                                      bucket_min, project)
         print(f"✓ inline extraction staged: {n} chunk(s) await main Claude",
               file=sys.stderr)
-        return
-    _extract_haiku(project, board, card_py, buckets, chunks, sorted_buckets,
-                   events, bucket_min, workers, chunk_size, days, date_filter,
-                   show_lifecycle, pace_s, reconcile, phase=phase,
-                   will_reconcile=will_reconcile)
+        return 0
+    return _extract_haiku(project, board, card_py, buckets, chunks,
+                          sorted_buckets, events, bucket_min, workers,
+                          chunk_size, days, date_filter, show_lifecycle,
+                          pace_s, reconcile, phase=phase,
+                          will_reconcile=will_reconcile,
+                          cards_offset=cards_offset)
 
 
 def run(project: Path, board: Path, port: int, days: int,
@@ -869,14 +883,19 @@ def run(project: Path, board: Path, port: int, days: int,
                   f"cover {days}d of work ending then (not an empty recent gap)",
                   file=sys.stderr)
         if days > 1:
-            _run_window(project, board, card_py, days=off + 1, end_days_ago=off,
-                        show_lifecycle=True, pace_s=pace_s, phase="replay",
-                        seed_if_empty=seed_if_empty, reconcile=False, **common)
+            # Carry tier-1's emitted count into tier-2 so the HUD's "N cards
+            # emitted so far" continues from the replay total instead of
+            # resetting to 0 when it 'speeds up' (#hud-cumulative).
+            n_replay = _run_window(
+                project, board, card_py, days=off + 1, end_days_ago=off,
+                show_lifecycle=True, pace_s=pace_s, phase="replay",
+                seed_if_empty=seed_if_empty, reconcile=False, **common)
             _run_window(project, board, card_py, days=off + days,
                         end_days_ago=off + 1,
                         show_lifecycle=True, pace_s=max(pace_s / 5, 0.0),
                         phase="speedup", seed_if_empty=False,
-                        reconcile=False, will_reconcile=reconcile, **common)
+                        reconcile=False, will_reconcile=reconcile,
+                        cards_offset=n_replay, **common)
         else:
             _run_window(project, board, card_py, days=off + 1, end_days_ago=off,
                         show_lifecycle=True, pace_s=pace_s, phase="solo",
