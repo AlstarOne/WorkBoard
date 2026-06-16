@@ -584,6 +584,11 @@ def reconcile_sweep(card_py: Path, board: Path, events: list[dict],
 # Anything bootstrap-minted WITHOUT one of these is low-signal chatter.
 _KEEP_TAGS = frozenset({"bug", "feature", "refactor", "enhancement"})
 
+# Per-card glide pace for the first-run declutter sweep (ms). Deliberately fast:
+# the sweep can move 100+ cards, so a slow pace makes the board crawl. This is a
+# feature-specific pace, NOT the simulation glide knob the no-override rule guards.
+_DECLUTTER_PACE_MS = 45
+
 
 def declutter_sweep(card_py: Path, board: Path, today: str | None = None) -> int:
     """#630 — DETERMINISTIC first-run declutter (NO LLM, NO subprocess-per-card).
@@ -647,9 +652,12 @@ def declutter_sweep(card_py: Path, board: Path, today: str | None = None) -> int
     except subprocess.SubprocessError:
         pass  # header is cosmetic — proceed with the sweep regardless
 
-    # 2) Glide each victim into Discarded one at a time. Omit --pause-ms (use the
-    #    default glide pace, per the no-override rule); a short dwell separates the
-    #    moves into a visible sequence instead of one teleporting blob.
+    # 2) Glide each victim into Discarded one at a time at a DELIBERATE fast pace.
+    #    Declutter can move 100+ cards, so the default 400ms glide + a 250ms dwell
+    #    made the sweep crawl (~0.65s/card). The user set declutter to _DECLUTTER_
+    #    PACE_MS (45ms) — a deliberate per-feature pace (not a per-session override
+    #    of the simulation knob): pass it as --pause-ms so the single fly call owns
+    #    the cadence, and drop the separate loop sleep so the total really is 45ms.
     swept = 0
     for c in victims:
         num = c.get("num")
@@ -658,7 +666,8 @@ def declutter_sweep(card_py: Path, board: Path, today: str | None = None) -> int
         try:
             out = subprocess.run(
                 [py, str(card_py), "--board", str(board), "fly", str(num),
-                 "discarded", "--via", "declutter"],
+                 "discarded", "--via", "declutter",
+                 "--pause-ms", str(_DECLUTTER_PACE_MS)],
                 capture_output=True, text=True, timeout=10)
         except subprocess.SubprocessError as e:
             print(f"  declutter: SKIP #{num} — fly errored ({e})", file=sys.stderr)
@@ -669,7 +678,6 @@ def declutter_sweep(card_py: Path, board: Path, today: str | None = None) -> int
             err = (out.stderr or out.stdout or "").strip().replace("\n", " ")[:80]
             print(f"  declutter: SKIP #{num} → discarded (rc={out.returncode}: {err})",
                   file=sys.stderr)
-        time.sleep(0.25)  # brief dwell → cards arrive as a sequence, not a blob
 
     print(f"  declutter: swept {swept} low-signal card(s) → Discarded "
           f"under '{date_str}' header", file=sys.stderr)
