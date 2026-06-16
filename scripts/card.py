@@ -502,6 +502,13 @@ def main():
             try:
                 d = load(board)
                 args.fn(args, d, board)
+            except card_state.BoardConflict:
+                # #643 — the rev moved under the held lock, which can only mean
+                # an external writer bypassed board_lock. Exit cleanly (don't
+                # clobber) rather than surface a traceback; re-running re-reads.
+                sys.exit("✋ the board changed underneath an exclusive write "
+                         "(an external writer bypassed the lock). Nothing was "
+                         "written — re-run the command.")
             finally:
                 card_state._HOLDING_LOCK = False
 

@@ -196,6 +196,29 @@ def _write_direct(p: Path, data: bytes) -> None:
     _boardio.write_backup(p, data)
 
 
+def _current_rev(p: Path) -> int | None:
+    """The rev currently on disk, or None if the board can't be read (missing /
+    torn). None means 'can't compare' → callers skip the CAS check rather than
+    false-conflict (e.g. a first-ever write before the file exists)."""
+    try:
+        with p.open() as f:
+            return json.load(f).get("rev", 0)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _assert_base_rev(p: Path, base_rev: int) -> None:
+    """#643 — direct-write rev-CAS. The on-disk rev must still equal the rev we
+    loaded; if another writer bumped it in between, raise BoardConflict so the
+    caller reloads + retries instead of clobbering the winner. This gives the
+    no-server / server-vanished direct path the SAME guarantee the server POST
+    path already has via X-Board-Base-Rev (#609). MUST be called while holding
+    board_lock (or _HOLDING_LOCK), so the check-and-write is atomic."""
+    cur = _current_rev(p)
+    if cur is not None and cur != base_rev:
+        raise BoardConflict()
+
+
 def atomic_save(p: Path, d: dict, regen: bool = True) -> int:
     """Bump rev, set savedAt/savedBy=claude.
 
@@ -209,6 +232,14 @@ def atomic_save(p: Path, d: dict, regen: bool = True) -> int:
     While that lock is held (_HOLDING_LOCK) we MUST NOT POST — a server's own
     write also grabs the file lock, so POSTing under it would deadlock — and we
     must NOT re-lock (flock on a second fd in the same process self-deadlocks).
+
+    #643 — every direct write also rev-CAS-checks under the lock (_assert_base_rev)
+    so the no-server fallback matches the server POST's lost-update protection. The
+    load that produced base_rev may have happened UNLOCKED (the server branch of
+    main() doesn't hold the file lock); if the server then vanished mid-command,
+    self-locking only the write would still clobber a writer that bumped the rev in
+    the gap. The CAS closes that — on mismatch it raises BoardConflict, which
+    main()'s retry loop reloads + retries on.
     """
     base_rev = d.get("rev", 0)          # #609 — the rev we loaded; sent for CAS
     d["rev"] = base_rev + 1
@@ -217,7 +248,10 @@ def atomic_save(p: Path, d: dict, regen: bool = True) -> int:
 
     data = json.dumps(d, indent=2, ensure_ascii=False).encode()
     if _HOLDING_LOCK:
-        # No-server path: caller (main) already holds the lock and chose direct.
+        # No-server path: caller (main) already holds the lock and loaded UNDER
+        # it, so the on-disk rev can't have moved — the CAS is a cheap assertion
+        # that also defends a caller that set the flag without a locked load.
+        _assert_base_rev(p, base_rev)
         _write_direct(p, data)
     else:
         # #609 — raises BoardConflict on a 409 (stale base); we let it propagate
@@ -227,11 +261,13 @@ def atomic_save(p: Path, d: dict, regen: bool = True) -> int:
             return d["rev"]
         # Server vanished mid-command → self-lock this one write. #609 — never
         # write unlocked: if the lock can't be acquired, fail loudly rather than
-        # risk a lost update.
+        # risk a lost update. #643 — CAS under the lock: the base_rev load was
+        # unlocked (server branch), so verify nothing wrote in the gap.
         with _boardio.board_lock(p) as locked:
             if not locked:
                 sys.exit("✋ couldn't acquire the board lock (another writer is "
                          "busy). Nothing was written — re-run the command.")
+            _assert_base_rev(p, base_rev)
             _write_direct(p, data)
     if regen and REGEN_SCRIPT.exists():
         subprocess.run(
