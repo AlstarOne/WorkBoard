@@ -389,7 +389,8 @@ def _emit_extraction_pending(board: Path, card_py: Path,
 
 def reconcile_sweep(card_py: Path, board: Path, events: list[dict],
                      banner_num: int | None = None,
-                     only_discovered: bool = True) -> int:
+                     only_discovered: bool = True,
+                     gate=None) -> int:
     """LLM sweep on non-done cards. Asks LLM if any should move based on the
     activity log. Applies moves. Returns count moved.
 
@@ -400,6 +401,15 @@ def reconcile_sweep(card_py: Path, board: Path, events: list[dict],
     reconcile EVERY non-done card (the live In-Progress cards from the last
     session — created by `card.py add`, so untagged — are exactly what needs
     IP→done / →mandatory truth-making).
+
+    `gate` (#641) — optional `Callable[[], bool]` re-evaluated AFTER recon_lock is
+    acquired. The SessionStart recon-only path passes the replay-gate check here so
+    the "is a bootstrap replay streaming?" decision and the sweep are atomic under
+    the lock — closing the TOCTOU where the gate, checked before the lock, could
+    flip in the gap (a fill starting between check and lock would otherwise be
+    raced). A plain callable (not a direct _replay_complete import) keeps the
+    dependency one-directional: hourly_reconcile never reaches up into
+    hourly_extractor. None (the bootstrap callers) → no extra gate.
 
     When CLAUDECODE=1 (we're running inside an active Claude Code session),
     skip the Haiku subprocess entirely. Main Claude already has the full
@@ -450,6 +460,15 @@ def reconcile_sweep(card_py: Path, board: Path, events: list[dict],
     with _boardio.recon_lock(board) as got_lock:
         if not got_lock:
             print("  recon: another reconcile is already running — skip",
+                  file=sys.stderr)
+            return 0
+
+        # #641 TOCTOU: re-check the caller's gate now that we hold the lock. The
+        # SessionStart recon-only path checks the replay gate cheaply BEFORE
+        # harvesting, but a bootstrap fill could have started in the gap; this
+        # re-check (atomic with the sweep under the lock) is the authoritative one.
+        if gate is not None and not gate():
+            print("  recon: gate closed after lock (replay began) — skip",
                   file=sys.stderr)
             return 0
 

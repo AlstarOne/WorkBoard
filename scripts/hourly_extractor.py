@@ -479,7 +479,8 @@ def _backfill_failed_buckets(project: Path, board: Path) -> None:
     if not state.get("partial") or not failed:
         return
     # A fresh fill is still streaming → it owns the state; don't race it. This
-    # session's backfill resumes next time once the gate has reopened.
+    # session's backfill resumes next time once the gate has reopened. #641: this
+    # is the cheap pre-check; the authoritative one is re-checked under the lock.
     if not _replay_complete(board):
         return
     bucket_min = int(state.get("bucket_min") or 60)
@@ -487,6 +488,11 @@ def _backfill_failed_buckets(project: Path, board: Path) -> None:
     with _boardio.recon_lock(board) as got_lock:
         if not got_lock:
             return  # another recon/backfill pass already holds the board
+        # #641 TOCTOU: a bootstrap fill could have started between the pre-check
+        # and acquiring the lock — re-check the gate now that we hold it, so we
+        # never emit recovered cards into a board that's actively re-streaming.
+        if not _replay_complete(board):
+            return
 
         # Window: from now back past the OLDEST failed bucket (key → start epoch),
         # capped at 30d so a very old drop doesn't harvest forever.
@@ -557,6 +563,10 @@ def _run_reconcile_only(project: Path, board: Path) -> None:
     # live emits (the "cards jumped all over the place" report). The replay's own
     # end-of-replay sweep covers this window; this pass resumes next session once
     # completed_card_replay == 1.
+    # #641: this is the CHEAP pre-check (avoid harvesting if a replay is clearly
+    # in progress). It is NOT authoritative — a fill could start between here and
+    # the sweep. reconcile_sweep re-checks the same gate UNDER recon_lock (the
+    # `gate=` arg below) to close that TOCTOU.
     if not _replay_complete(board):
         print("recon-only: card replay in progress — skip", file=sys.stderr)
         return
@@ -602,7 +612,9 @@ def _run_reconcile_only(project: Path, board: Path) -> None:
         _write_last_recon_ms(board, int(now.timestamp() * 1000))
         return
 
-    n = reconcile_sweep(card_py, board, events, only_discovered=False)
+    # #641: pass the replay gate so it is re-checked atomically under recon_lock.
+    n = reconcile_sweep(card_py, board, events, only_discovered=False,
+                        gate=lambda: _replay_complete(board))
     print(f"✓ recon-only: moved {n} card(s)", file=sys.stderr)
     _write_last_recon_ms(board, int(now.timestamp() * 1000))
 
