@@ -9,6 +9,14 @@ uses date-stamped pre-1.0 development entries until the first tagged release.
 
 Pre-release hardening toward `v1.0.0-rc.1`. Built across Plan v2 phases 0–6.
 
+### 0.9.23 — Declutter flies cards in paced (2026-06-16)
+
+- **First-run declutter now glides cards into Discarded one at a time** instead of a
+  single batch write that made all N cards teleport at once (looked messy). Each
+  victim flies via `card.py fly … --via declutter` at the default glide pace with a
+  short dwell, matching the rest of the board's motion. Added `declutter` to the
+  `--via` choices + `VIA_LABEL` so the Logs HUD shows "(Declutter) MOVE".
+
 ### 0.9.22 — Duplicate-tab fix + first-run declutter (2026-06-16)
 
 - **Duplicate board tabs, eliminated (#122, #150).** `board_autoopen.sh` now serializes

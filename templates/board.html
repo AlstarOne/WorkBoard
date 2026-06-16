@@ -2077,7 +2077,7 @@ function _renderLogLine(entry) {
     ? ' <span style="color:#ff6b6b;font-weight:600;">[🐞 bug]</span>' : '';
   // #504 — source prefix so an automated move isn't mistaken for a hands-on one.
   // Muted grey, lower-weight: "the system did this", not a card you touched.
-  const VIA_LABEL = { user: 'User', agent: 'Agent', recon: 'Recon', undo: 'Undo', redo: 'Redo', harvest: 'Auto-harvest', autoship: 'Auto-ship' };
+  const VIA_LABEL = { user: 'User', agent: 'Agent', recon: 'Recon', undo: 'Undo', redo: 'Redo', harvest: 'Auto-harvest', autoship: 'Auto-ship', declutter: 'Declutter' };
   // #509 — colour the actor so User vs Agent is scannable at a glance: user =
   // warm teal (a human did it), agent = lavender (Claude/CLI), automated
   // sub-types = muted grey ("the system, unattended").

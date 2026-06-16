@@ -157,7 +157,7 @@ def build_parser():
     pfy.add_argument("--force", action="store_true",
                      help="override the decompose-before-IP guard (genuinely one atomic task)")
     pfy.add_argument("--via", default=None, metavar="SOURCE",
-                     choices=["recon", "undo", "harvest", "autoship"],
+                     choices=["recon", "undo", "harvest", "autoship", "declutter"],
                      help="#504 tag WHO moved it; Logs HUD shows e.g. (Recon) MOVE — "
                           "omit for a normal hands-on move")
     pfy.set_defaults(fn=cmd_fly)

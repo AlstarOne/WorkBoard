@@ -607,8 +607,9 @@ def declutter_sweep(card_py: Path, board: Path, today: str | None = None) -> int
     the recurring SessionStart recon. Combined with the 'discovered' key above,
     that's belt-and-braces: a user's later untagged card is never swept.
 
-    Writes via card_state.atomic_save (one batch write, rev-CAS + SSE broadcast) —
-    the swept cards refresh into Discarded calmly, no 75 animated card.py flies.
+    Flies the cards in ONE AT A TIME via card.py (paced glide through the server
+    SSE), not a single batch write — a batch made all N cards teleport into
+    Discarded at once and looked messy; a paced fly matches the rest of the board.
     """
     try:
         d = card_state.load(board)
@@ -627,49 +628,52 @@ def declutter_sweep(card_py: Path, board: Path, today: str | None = None) -> int
     if not victims:
         return 0
 
-    ts = card_state.now_iso()
-    date_str = today or ts[:10]  # YYYY-MM-DD
+    date_str = today or card_state.now_iso()[:10]  # YYYY-MM-DD
+    py = sys.executable
 
-    # Dated, reversible header card pinned to the top of Discarded. board.html
-    # renders any 'section-header'-tagged card as a divider, not a normal card.
-    header_num = d.get("nextNum", 1)
-    d["nextNum"] = header_num + 1
-    cards.insert(0, {
-        "num": header_num,
-        "id": f"first-run-sweep-{date_str}",
-        "code": "",
-        "priority": None,
-        "title": f"🧹 First-run sweep · {date_str} · {len(victims)} items",
-        "column": "discarded",
-        "tags": ["section-header"],
-        "origin": "Auto: first-run declutter (#630) — low-signal 'discovered' cards "
-                  "with no work-type tag. Drag any card back out to restore it.",
-        "notes": "",
-        "writeup": "",
-        "createdAt": ts,
-        "updatedAt": ts,
-        "doneAt": None,
-        "lastTouchedSubtask": None,
-        "linkedCards": [],
-        "subtasks": [],
-        "history": [{"from": None, "to": "discarded", "at": ts, "via": "declutter"}],
-    })
-
-    for c in victims:
-        old = c.get("column")
-        c["column"] = "discarded"
-        c["updatedAt"] = ts
-        c.setdefault("history", []).append(
-            {"from": old, "to": "discarded", "at": ts, "via": "declutter"})
-
+    # 1) Dated, reversible header FIRST, so the swept cards glide in beneath it.
+    #    board.html renders a 'section-header' card as a divider. --force: the tag
+    #    isn't in the board's taxonomy; --no-auto-urgent: title carries no urgency.
     try:
-        card_state.atomic_save(board, d)
-    except Exception as e:
-        print(f"  declutter: save failed ({e}) — board untouched", file=sys.stderr)
-        return 0
-    print(f"  declutter: swept {len(victims)} low-signal card(s) → Discarded "
+        subprocess.run(
+            [py, str(card_py), "--board", str(board), "add",
+             "--title", f"🧹 First-run sweep · {date_str} · {len(victims)} items",
+             "--column", "discarded", "--tag", "section-header",
+             "--force", "--no-auto-urgent",
+             "--origin", "Auto: first-run declutter (#630) — low-signal "
+                         "'discovered' cards with no work-type tag. Drag any "
+                         "card back out to restore it."],
+            capture_output=True, text=True, timeout=10)
+    except subprocess.SubprocessError:
+        pass  # header is cosmetic — proceed with the sweep regardless
+
+    # 2) Glide each victim into Discarded one at a time. Omit --pause-ms (use the
+    #    default glide pace, per the no-override rule); a short dwell separates the
+    #    moves into a visible sequence instead of one teleporting blob.
+    swept = 0
+    for c in victims:
+        num = c.get("num")
+        if not isinstance(num, int):
+            continue
+        try:
+            out = subprocess.run(
+                [py, str(card_py), "--board", str(board), "fly", str(num),
+                 "discarded", "--via", "declutter"],
+                capture_output=True, text=True, timeout=10)
+        except subprocess.SubprocessError as e:
+            print(f"  declutter: SKIP #{num} — fly errored ({e})", file=sys.stderr)
+            continue
+        if out.returncode == 0:
+            swept += 1
+        else:
+            err = (out.stderr or out.stdout or "").strip().replace("\n", " ")[:80]
+            print(f"  declutter: SKIP #{num} → discarded (rc={out.returncode}: {err})",
+                  file=sys.stderr)
+        time.sleep(0.25)  # brief dwell → cards arrive as a sequence, not a blob
+
+    print(f"  declutter: swept {swept} low-signal card(s) → Discarded "
           f"under '{date_str}' header", file=sys.stderr)
-    return len(victims)
+    return swept
 
 
 __all__ = [
