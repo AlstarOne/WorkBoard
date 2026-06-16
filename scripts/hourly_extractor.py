@@ -53,6 +53,18 @@ from hourly_reconcile import *  # noqa: E402,F401,F403  reconcile_sweep/_emit_ex
 
 # ---------- LLM dispatch --------------------------------------------------
 
+class ChunkExtractionError(Exception):
+    """A chunk's LLM extraction genuinely FAILED (subprocess error / non-zero
+    exit / non-JSON) — distinct from a bucket that legitimately had no work
+    (empty digest → []). #627: without this distinction a failed bucket looked
+    identical to an empty one, so the tier-fly marked replay complete and
+    silently dropped the bucket's cards. Carries the bucket labels that failed
+    so the caller can record/recover them."""
+    def __init__(self, labels: str = ""):
+        self.labels = labels
+        super().__init__(labels)
+
+
 def extract_cards_for_hour(bucket_events: list[dict], project: Path,
                             bucket_label: str,
                             timeout_s: int = 60) -> list[dict]:
@@ -93,16 +105,16 @@ def extract_cards_for_chunk(chunk: list[tuple[str, list[dict]]],
     except (FileNotFoundError, subprocess.SubprocessError) as e:
         print(f"  ! LLM call failed for chunk [{label_summary}]: {e}",
               file=sys.stderr)
-        return []
+        raise ChunkExtractionError(label_summary) from e
     if proc.returncode != 0:
         print(f"  ! claude -p exit {proc.returncode} for chunk [{label_summary}]",
               file=sys.stderr)
-        return []
+        raise ChunkExtractionError(label_summary)
     cards = parse_card_array(proc.stdout)
     if cards is None:
         print(f"  ! LLM returned non-JSON for chunk [{label_summary}]",
               file=sys.stderr)
-        return []
+        raise ChunkExtractionError(label_summary)
     return cards
 
 
@@ -412,9 +424,15 @@ def _mark_replay_started(board: Path, n_days: int) -> None:
         pass
 
 
-def _mark_replay_complete(board: Path) -> None:
+def _mark_replay_complete(board: Path,
+                          failed_buckets: list[int] | None = None) -> None:
     """Flip completed_card_replay → 1 once the LAST replay tier has finished
-    emitting. Only after this does reconcile run."""
+    emitting. Only after this does reconcile run.
+
+    #627: `failed_buckets` records buckets that hard-failed extraction. The gate
+    still flips to 1 (so recon is never stuck — #384) but the fill is stamped
+    `partial: true` with the dropped bucket keys, turning a silent drop into a
+    recorded, re-runnable one."""
     p = _replay_state_path(board)
     try:
         state = json.loads(p.read_text()) if p.exists() else {}
@@ -422,6 +440,8 @@ def _mark_replay_complete(board: Path) -> None:
         state = {}
     state["completed_card_replay"] = 1
     state["completed_at"] = datetime.now(timezone.utc).isoformat()
+    state["partial"] = bool(failed_buckets)
+    state["failed_buckets"] = list(failed_buckets or [])
     try:
         p.write_text(json.dumps(state))
     except OSError:
@@ -610,14 +630,22 @@ def _extract_chunk_with_retries(chunk_keys: list[int],
                                 bucket_min: int) -> list[dict]:
     """Extract one chunk's cards with the two-tier retry ladder on failure:
     tier 1 splits a multi-bucket chunk in half; tier 2 recursively re-buckets
-    a single failed bucket at half bucket_min."""
+    a single failed bucket at half bucket_min.
+
+    #627: failure is now signalled by ChunkExtractionError (raised by
+    extract_cards_for_chunk), NOT by an empty list — an empty list means the
+    bucket legitimately had no work and is returned as-is (no wasted retry). If
+    the whole ladder exhausts on a HARD failure and recovers nothing, this
+    re-raises ChunkExtractionError so the caller can record the dropped bucket
+    instead of mistaking it for an empty one."""
 
     def _retry_recursive_subbuckets(
             bucket_events: list[dict], current_min: int,
             depth: int = 0, max_depth: int = 3) -> list[dict]:
-        """Last-resort: a single bucket of `current_min` minutes timed out.
-        Re-bucket its events at half the size and retry each sub-bucket.
-        Recurse until success or max_depth. Returns combined cards."""
+        """Last-resort: a single bucket of `current_min` minutes failed. Re-bucket
+        its events at half the size and retry each sub-bucket. Recurse until
+        success or max_depth. Best-effort: returns whatever it recovers (possibly
+        []); never raises — the caller decides whether [] here is a hard failure."""
         if not bucket_events or current_min <= 1 or depth >= max_depth:
             return []
         half_min = max(1, current_min // 2)
@@ -632,9 +660,10 @@ def _extract_chunk_with_retries(chunk_keys: list[int],
         recovered: list[dict] = []
         for sk in sub_keys:
             label = _bucket_label(sk, half_min)
-            cards = extract_cards_for_chunk(
-                [(label, sub_buckets[sk])], project)
-            if not cards:
+            try:
+                cards = extract_cards_for_chunk(
+                    [(label, sub_buckets[sk])], project)
+            except ChunkExtractionError:
                 cards = _retry_recursive_subbuckets(
                     sub_buckets[sk], half_min, depth + 1, max_depth)
             recovered.extend(cards)
@@ -642,31 +671,46 @@ def _extract_chunk_with_retries(chunk_keys: list[int],
 
     chunk = [(_bucket_label(k, bucket_min), buckets[k])
              for k in chunk_keys]
-    cards = extract_cards_for_chunk(chunk, project)
+    chunk_label = ", ".join(_bucket_label(k, bucket_min) for k in chunk_keys)
+    try:
+        # Clean result (cards OR a legitimate empty bucket) — no retry needed.
+        return extract_cards_for_chunk(chunk, project)
+    except ChunkExtractionError:
+        pass  # hard failure → drop into the retry ladder below
+
     # Tier 1 retry: chunk-size > 1 → split in half (smaller LLM digests).
-    if not cards and len(chunk_keys) > 1:
+    if len(chunk_keys) > 1:
         mid = len(chunk_keys) // 2
         halves = [chunk_keys[:mid], chunk_keys[mid:]]
-        print(f"  ↻ retry: splitting failed chunk "
-              f"[{', '.join(_bucket_label(k, bucket_min) for k in chunk_keys)}] "
-              f"into {len(halves)} halves",
-              file=sys.stderr)
+        print(f"  ↻ retry: splitting failed chunk [{chunk_label}] "
+              f"into {len(halves)} halves", file=sys.stderr)
         recovered: list[dict] = []
+        hard_fail = False
         for half in halves:
             sub_chunk = [(_bucket_label(k, bucket_min), buckets[k])
                          for k in half]
-            sub_cards = extract_cards_for_chunk(sub_chunk, project)
-            if not sub_cards and len(half) == 1:
-                # Tier 2 retry: single-bucket call STILL failed → recursive
-                # sub-bucketing at half bucket_min.
-                sub_cards = _retry_recursive_subbuckets(
-                    buckets[half[0]], bucket_min)
+            try:
+                sub_cards = extract_cards_for_chunk(sub_chunk, project)
+            except ChunkExtractionError:
+                # Tier 2 retry: a single failed bucket → recursive sub-bucketing.
+                # A multi-bucket half that still fails isn't sub-split (matches
+                # the original ladder) — it counts as a hard failure if empty.
+                sub_cards = (_retry_recursive_subbuckets(buckets[half[0]],
+                                                         bucket_min)
+                             if len(half) == 1 else [])
+                if not sub_cards:
+                    hard_fail = True
             recovered.extend(sub_cards)
-        cards = recovered
-    elif not cards and len(chunk_keys) == 1:
-        # Tier 2 retry from the start (chunk-size 1 input that failed).
-        cards = _retry_recursive_subbuckets(
-            buckets[chunk_keys[0]], bucket_min)
+        # Only a hard failure that recovered NOTHING is a genuine drop. A partial
+        # recovery keeps what it got (better than dropping the whole chunk).
+        if hard_fail and not recovered:
+            raise ChunkExtractionError(chunk_label)
+        return recovered
+
+    # Single-bucket chunk failed from the start → tier 2 recursive sub-bucketing.
+    cards = _retry_recursive_subbuckets(buckets[chunk_keys[0]], bucket_min)
+    if not cards:
+        raise ChunkExtractionError(chunk_label)
     return cards
 
 
@@ -678,7 +722,7 @@ def _extract_haiku(project: Path, board: Path, card_py: Path,
                    show_lifecycle: bool, pace_s: float,
                    reconcile: bool, phase: str = "",
                    will_reconcile: bool = False,
-                   cards_offset: int = 0) -> int:
+                   cards_offset: int = 0) -> tuple[int, list[int]]:
     """HAIKU mode: parallel per-chunk extraction → emit cards as chunks finish,
     snapshot the result, then reconcile. The autonomous (costs-Haiku) path.
     phase (#327) tags the HUD: 'replay' (tier-1) / 'speedup' (tier-2) / 'solo'.
@@ -692,13 +736,39 @@ def _extract_haiku(project: Path, board: Path, card_py: Path,
     the same fly-in. The HUD's "N cards emitted so far" line adds it so the
     count CARRIES OVER across the tier-1→tier-2 boundary instead of resetting to
     0 ('speeding up' must continue from the replay tier's total, not restart).
-    Returns this window's own emitted count so the caller can accumulate it."""
+
+    Returns (n_cards, failed_buckets): this window's emitted count (so the caller
+    can accumulate the offset) and the bucket keys that hard-failed even after the
+    recovery pass (#627 — so the tier-fly records/surfaces them, never silent)."""
     t0 = time.monotonic()
     # Progress banner: a single 'notes' card the user can watch update live.
     banner_num = _banner_create(card_py, board, len(chunks), phase)
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
     n_cards = 0
+    # #627: buckets whose extraction HARD-FAILED (ChunkExtractionError or a
+    # crashed worker), as opposed to buckets that legitimately had no work.
+    # Tracked so a failure is recorded + retried instead of silently dropped.
+    failed_buckets: list[int] = []
+
+    def _emit_chunk_cards(cards: list[dict], chunk_keys: list[int], *,
+                          board, card_py, show_lifecycle, pace_s) -> int:
+        """Emit a chunk's cards to the board; return how many flew. Shared by the
+        main pass and the #627 recovery pass. The board-write context is passed
+        explicitly (not closed over) so the static name-audit stays strict."""
+        label_summary = " + ".join(_bucket_label(k, bucket_min)
+                                   for k in chunk_keys)
+        first_bucket_ts = datetime.fromtimestamp(
+            chunk_keys[0] * bucket_min * 60, tz=timezone.utc).isoformat()
+        emitted = 0
+        for card in cards:
+            card["_bucket_label"] = label_summary
+            card["_bucket_ts_iso"] = first_bucket_ts
+            num = emit_card(card_py, board, card, show_lifecycle, pace_s)
+            if num:
+                emitted += 1
+            time.sleep(pace_s)
+        return emitted
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
@@ -711,28 +781,29 @@ def _extract_haiku(project: Path, board: Path, card_py: Path,
         # 5/28: 'dont worry about rearranging, we can arrange by time later').
         for fut in as_completed(futures):
             chunk_keys = futures[fut]
-            try:
-                cards = fut.result()
-            except Exception as e:
-                cards = []
-                print(f"  ! chunk error: {e}", file=sys.stderr)
-            completed += 1
             label_summary = " + ".join(_bucket_label(k, bucket_min)
                                        for k in chunk_keys)
+            try:
+                cards = fut.result()
+            except ChunkExtractionError:
+                # Genuine extraction failure (not an empty bucket) — record the
+                # buckets for the recovery pass instead of swallowing as 0 cards.
+                cards = []
+                failed_buckets.extend(chunk_keys)
+                print(f"  ! chunk FAILED (recorded for retry): [{label_summary}]",
+                      file=sys.stderr)
+            except Exception as e:
+                cards = []
+                failed_buckets.extend(chunk_keys)
+                print(f"  ! chunk error (recorded for retry): {e}",
+                      file=sys.stderr)
+            completed += 1
             print(f"  [{completed}/{len(chunks)}] [{label_summary}]  "
                   f"→ {len(cards)} card(s) extracted",
                   file=sys.stderr)
-            # Bucket ts for createdAt = first bucket's start (ISO).
-            first_bucket_ts = datetime.fromtimestamp(
-                chunk_keys[0] * bucket_min * 60, tz=timezone.utc).isoformat()
-            for card in cards:
-                card["_bucket_label"] = label_summary
-                card["_bucket_ts_iso"] = first_bucket_ts
-                num = emit_card(card_py, board, card,
-                                show_lifecycle, pace_s)
-                if num:
-                    n_cards += 1
-                time.sleep(pace_s)
+            n_cards += _emit_chunk_cards(
+                cards, chunk_keys, board=board, card_py=card_py,
+                show_lifecycle=show_lifecycle, pace_s=pace_s)
             # Drive the HUD after each chunk completes (the notes-column banner
             # card is gone; banner_num is None). #327 — on the LAST chunk of a
             # 'replay' tier (tier-2 still to come), swap the generic progress
@@ -755,6 +826,32 @@ def _extract_haiku(project: Path, board: Path, card_py: Path,
                            completed, len(chunks), cards_offset + n_cards,
                            phase=phase, label_override=handoff, final=is_final)
 
+    # #627 recovery pass: one more BOUNDED attempt at each hard-failed bucket so a
+    # transient LLM error (timeout, cold-start, a flaky exit) doesn't silently
+    # drop a whole range of cards. Per-bucket granularity (the failed chunk's
+    # buckets were spread into failed_buckets). Anything still failing after this
+    # is returned up so run() can record + surface it (never silently complete).
+    if failed_buckets:
+        print(f"  ↻ recovery: retrying {len(failed_buckets)} hard-failed "
+              f"bucket(s) once more", file=sys.stderr)
+        still_failed: list[int] = []
+        for k in failed_buckets:
+            try:
+                cards = _extract_chunk_with_retries([k], buckets, project,
+                                                    bucket_min)
+            except ChunkExtractionError:
+                still_failed.append(k)
+                continue
+            n_cards += _emit_chunk_cards(
+                cards, [k], board=board, card_py=card_py,
+                show_lifecycle=show_lifecycle, pace_s=pace_s)
+        failed_buckets = still_failed
+        if failed_buckets:
+            print(f"  ⚠ {len(failed_buckets)} bucket(s) UNRECOVERED: "
+                  f"[{', '.join(_bucket_label(k, bucket_min) for k in failed_buckets)}]"
+                  f" — will be recorded, NOT silently dropped (#627)",
+                  file=sys.stderr)
+
     # Save snapshot of post-extraction state BEFORE reconciliation, so
     # offline recon testing can iterate against a stable baseline.
     _save_snapshot(board, events, {
@@ -762,6 +859,7 @@ def _extract_haiku(project: Path, board: Path, card_py: Path,
         "chunk_size": chunk_size, "date_filter": date_filter,
         "n_buckets": len(sorted_buckets), "n_chunks": len(chunks),
         "n_cards": n_cards,
+        "failed_buckets": list(failed_buckets),
     })
 
     # Reconciliation sweep — catches "user said nvm" / "matching commit"
@@ -776,9 +874,10 @@ def _extract_haiku(project: Path, board: Path, card_py: Path,
                        len(sorted_buckets), len(chunks), n_moved)
 
     print(f"✓ emitted {n_cards} card(s) across {len(sorted_buckets)} bucket(s) "
-          f"in {len(chunks)} chunk(s); recon moved {n_moved} card(s)",
+          f"in {len(chunks)} chunk(s); recon moved {n_moved} card(s); "
+          f"{len(failed_buckets)} bucket(s) unrecovered",
           file=sys.stderr)
-    return n_cards
+    return n_cards, failed_buckets
 
 
 def _run_window(project: Path, board: Path, card_py: Path, *,
@@ -787,7 +886,8 @@ def _run_window(project: Path, board: Path, card_py: Path, *,
                 sources, date_filter, bucket_min: int, recent_first: bool,
                 max_buckets: int, chunk_size: int, workers: int,
                 reconcile: bool, mode: str,
-                will_reconcile: bool = False, cards_offset: int = 0) -> int:
+                will_reconcile: bool = False,
+                cards_offset: int = 0) -> tuple[int, list[int]]:
     """Extract ONE history window: events → filter → bucketize → emit. The
     reusable unit behind BOTH the single-pass fill and the #327 two-tier fly,
     so tiering has one source of truth (no duplicate orchestration in bash).
@@ -795,17 +895,17 @@ def _run_window(project: Path, board: Path, card_py: Path, *,
     `will_reconcile` is forwarded to `_extract_haiku` so the LAST tier of a
     tier-fly hands off to the reconcile stage instead of flashing '✓ COMPLETE'.
 
-    `cards_offset` is forwarded so the HUD card-count carries across tiers;
-    returns this window's emitted count (0 if nothing extracted) so the tier-fly
-    can accumulate it into the next tier's offset."""
+    `cards_offset` is forwarded so the HUD card-count carries across tiers.
+    Returns (n_cards, failed_buckets) — the emitted count (0 if nothing
+    extracted) plus any hard-failed buckets (#627), both empty on early exit."""
     events = _flatten_events(project, days, sources=sources)
     if not events:
         print(f"no events to extract (phase={phase or '-'})", file=sys.stderr)
-        return 0
+        return 0, []
     events = _filter_events(events, project, date_filter, end_days_ago,
                             seed_if_empty=seed_if_empty)
     if events is None:
-        return 0
+        return 0, []
     sorted_buckets, buckets, chunks = _bucketize(
         events, bucket_min, recent_first, max_buckets, chunk_size)
     print(f"▶ hourly extraction [{phase or 'single'}]: {len(sorted_buckets)} "
@@ -817,7 +917,7 @@ def _run_window(project: Path, board: Path, card_py: Path, *,
                                      bucket_min, project)
         print(f"✓ inline extraction staged: {n} chunk(s) await main Claude",
               file=sys.stderr)
-        return 0
+        return 0, []
     return _extract_haiku(project, board, card_py, buckets, chunks,
                           sorted_buckets, events, bucket_min, workers,
                           chunk_size, days, date_filter, show_lifecycle,
@@ -882,25 +982,31 @@ def run(project: Path, board: Path, port: int, days: int,
             print(f"  anchor: last session ~{off}d ago → fly window slides to "
                   f"cover {days}d of work ending then (not an empty recent gap)",
                   file=sys.stderr)
+        # #627: collect buckets that hard-failed across BOTH tiers so the gate is
+        # flipped HONESTLY (partial) and the drop is surfaced, never silent.
+        failed_buckets: list[int] = []
         if days > 1:
             # Carry tier-1's emitted count into tier-2 so the HUD's "N cards
             # emitted so far" continues from the replay total instead of
             # resetting to 0 when it 'speeds up' (#hud-cumulative).
-            n_replay = _run_window(
+            n_replay, fail_replay = _run_window(
                 project, board, card_py, days=off + 1, end_days_ago=off,
                 show_lifecycle=True, pace_s=pace_s, phase="replay",
                 seed_if_empty=seed_if_empty, reconcile=False, **common)
-            _run_window(project, board, card_py, days=off + days,
-                        end_days_ago=off + 1,
-                        show_lifecycle=True, pace_s=max(pace_s / 5, 0.0),
-                        phase="speedup", seed_if_empty=False,
-                        reconcile=False, will_reconcile=reconcile,
-                        cards_offset=n_replay, **common)
+            _n_spd, fail_speedup = _run_window(
+                project, board, card_py, days=off + days,
+                end_days_ago=off + 1,
+                show_lifecycle=True, pace_s=max(pace_s / 5, 0.0),
+                phase="speedup", seed_if_empty=False,
+                reconcile=False, will_reconcile=reconcile,
+                cards_offset=n_replay, **common)
+            failed_buckets = fail_replay + fail_speedup
         else:
-            _run_window(project, board, card_py, days=off + 1, end_days_ago=off,
-                        show_lifecycle=True, pace_s=pace_s, phase="solo",
-                        seed_if_empty=seed_if_empty, reconcile=False,
-                        will_reconcile=reconcile, **common)
+            _n_solo, failed_buckets = _run_window(
+                project, board, card_py, days=off + 1, end_days_ago=off,
+                show_lifecycle=True, pace_s=pace_s, phase="solo",
+                seed_if_empty=seed_if_empty, reconcile=False,
+                will_reconcile=reconcile, **common)
 
         # Replay of the past N days is COMPLETE → reconcile EXACTLY ONCE against
         # the whole replay span (not just the last tier's older slice — so an
@@ -923,7 +1029,21 @@ def run(project: Path, board: Path, port: int, days: int,
                     print(f"✓ end-of-replay reconcile: moved {n_moved} card(s)",
                           file=sys.stderr)
         finally:
-            _mark_replay_complete(board)
+            # #627: stamp the gate with the partial-failure record. Gate STILL
+            # reopens (completed_card_replay=1) so recon isn't stuck (#384), but
+            # the dropped buckets are recorded rather than declared a clean fill.
+            _mark_replay_complete(board, failed_buckets=failed_buckets)
+        # #627: a partial fill must be VISIBLE — loud stderr + a degraded final
+        # HUD instead of a clean "✓ COMPLETE", so the user knows to re-run.
+        if failed_buckets:
+            msg = (f"⚠ {len(failed_buckets)} time-bucket(s) couldn't be read — "
+                   f"re-run bootstrap to backfill them")
+            print(f"⚠ bootstrap finished PARTIAL: {msg}", file=sys.stderr)
+            try:
+                _banner_update(card_py, board, None, 1, 1, 0,
+                               phase="reconcile", label_override=msg, final=True)
+            except Exception:
+                pass
         return
 
     # Single pass — inline staging, or an explicit non-tier haiku run.
