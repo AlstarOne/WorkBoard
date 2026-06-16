@@ -256,7 +256,7 @@ If you find yourself responding to a substantive prompt without having read thes
 
    **How to read the tree:** BRANCHES (`card.* serve.* hourly_* discover2.*`) own a concern; LEAVES (`_*`, support) are depended on, never depend up. Dependency flows **downward only** (branch → leaf), so there are **no cycles**. New work attaches to the branch that owns its concern, or becomes a new leaf — it never rewrites a parent.
 
-   **Invariant:** 34 script modules, all import clean, no cycles, one-directional coupling. The 3 historical smells (oversized files, god-functions, repo↔skill duplication) are CLOSED — don't reintroduce them.
+   **Invariant:** 37 script modules, all import clean, no cycles, one-directional coupling. The 3 historical smells (oversized files, god-functions, repo↔skill duplication) are CLOSED — don't reintroduce them.
 
    **Redesign history (read before a big change so you reuse, not re-derive):**
    - **v1** (≈May 30–31, #307/#308) — internal cleanliness: file-size split, god-function kill, repo↔plugin de-dup. (The "godfunc" redesign.)

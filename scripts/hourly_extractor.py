@@ -55,6 +55,7 @@ from hourly_extract_llm import (  # noqa: E402  #646: LLM dispatch + retry ladde
     ChunkExtractionError, extract_cards_for_hour, extract_cards_for_chunk,
     _extract_chunk_with_retries,
 )
+import _boardio  # noqa: E402  (#645: recon_lock — serialize backfill vs concurrent recon)
 
 
 # ---------- main driver ---------------------------------------------------
@@ -387,14 +388,19 @@ def _mark_replay_started(board: Path, n_days: int) -> None:
 
 
 def _mark_replay_complete(board: Path,
-                          failed_buckets: list[int] | None = None) -> None:
+                          failed_buckets: list[int] | None = None,
+                          bucket_min: int = 60) -> None:
     """Flip completed_card_replay → 1 once the LAST replay tier has finished
     emitting. Only after this does reconcile run.
 
     #627: `failed_buckets` records buckets that hard-failed extraction. The gate
     still flips to 1 (so recon is never stuck — #384) but the fill is stamped
     `partial: true` with the dropped bucket keys, turning a silent drop into a
-    recorded, re-runnable one."""
+    recorded, re-runnable one.
+
+    #645: `bucket_min` is recorded alongside so the next SessionStart can re-derive
+    those buckets' time ranges (the keys are bucket_min-relative epoch indices) and
+    auto-backfill them — no manual re-run needed."""
     p = _replay_state_path(board)
     try:
         state = json.loads(p.read_text()) if p.exists() else {}
@@ -404,6 +410,7 @@ def _mark_replay_complete(board: Path,
     state["completed_at"] = datetime.now(timezone.utc).isoformat()
     state["partial"] = bool(failed_buckets)
     state["failed_buckets"] = list(failed_buckets or [])
+    state["bucket_min"] = int(bucket_min)
     if not _write_replay_state(p, state):
         # #642: leaving completed_card_replay=0 on disk would PERMANENTLY disable
         # recon for this board — every future SessionStart recon would stand down
@@ -441,6 +448,98 @@ def _has_nondone_cards(board: Path) -> bool:
         and "banner" not in (c.get("tags") or [])
         for c in state.get("cards", [])
     )
+
+
+def _backfill_failed_buckets(project: Path, board: Path) -> None:
+    """#645: re-extract buckets that hard-failed during the bootstrap fill.
+
+    #640 records `failed_buckets` + `bucket_min` + `partial:true` in the replay
+    state when a tier-fly bucket's Haiku extraction fails even after the in-fill
+    recovery pass. This runs at the NEXT SessionStart (before reconcile): it
+    re-harvests the window covering those buckets, re-bucketizes at the same
+    bucket_min — the keys are absolute, bucket_min-relative epoch indices, so they
+    reproduce exactly — and retries each one. Recovered buckets emit their cards
+    and are cleared; buckets that still fail stay recorded for a later attempt;
+    buckets whose source events have aged out of the harvest are dropped, so the
+    loop CONVERGES instead of retrying a dead bucket forever.
+
+    The payoff of #640: a partial bootstrap now self-heals on the next session
+    instead of needing a manual `bootstrap` re-run."""
+    card_py = Path(__file__).resolve().parent / "card.py"
+    if not card_py.exists():
+        return
+    p = _replay_state_path(board)
+    if not p.exists():
+        return
+    try:
+        state = json.loads(p.read_text())
+    except (OSError, json.JSONDecodeError):
+        return
+    failed = [int(k) for k in (state.get("failed_buckets") or [])]
+    if not state.get("partial") or not failed:
+        return
+    # A fresh fill is still streaming → it owns the state; don't race it. This
+    # session's backfill resumes next time once the gate has reopened.
+    if not _replay_complete(board):
+        return
+    bucket_min = int(state.get("bucket_min") or 60)
+
+    with _boardio.recon_lock(board) as got_lock:
+        if not got_lock:
+            return  # another recon/backfill pass already holds the board
+
+        # Window: from now back past the OLDEST failed bucket (key → start epoch),
+        # capped at 30d so a very old drop doesn't harvest forever.
+        now = datetime.now(timezone.utc)
+        oldest_start = datetime.fromtimestamp(
+            min(failed) * bucket_min * 60, tz=timezone.utc)
+        days = min(max(1, (now - oldest_start).days + 1), 30)
+
+        events = _flatten_events(project, days,
+                                 sources={"jsonl", "history", "convo", "git"})
+        events = _filter_events(events, project, None, 0) or []
+        buckets: dict[int, list[dict]] = {}
+        for ev in events:
+            buckets.setdefault(_bucket_hour(ev["ts"], bucket_min), []).append(ev)
+
+        recovered_cards = 0
+        still_failed: list[int] = []
+        gone: list[int] = []
+        for k in failed:
+            if k not in buckets:
+                # Source events aged out / transcript removed — un-backfillable;
+                # drop so the loop converges (never retry a dead bucket forever).
+                gone.append(k)
+                continue
+            try:
+                cards = _extract_chunk_with_retries([k], buckets, project,
+                                                    bucket_min)
+            except ChunkExtractionError:
+                still_failed.append(k)
+                continue
+            label = _bucket_label(k, bucket_min)
+            first_ts = datetime.fromtimestamp(
+                k * bucket_min * 60, tz=timezone.utc).isoformat()
+            for card in cards:
+                card["_bucket_label"] = label
+                card["_bucket_ts_iso"] = first_ts
+                if emit_card(card_py, board, card, False, 0.0):
+                    recovered_cards += 1
+
+        if gone:
+            print(f"  ⚠ backfill: {len(gone)} bucket(s) no longer harvestable "
+                  f"(source aged out) — dropping: "
+                  f"[{', '.join(_bucket_label(k, bucket_min) for k in gone)}]",
+                  file=sys.stderr)
+        # Rewrite the gate: only buckets that STILL hard-fail remain pending;
+        # recovered + gone ones are cleared. `partial` flips off when none remain.
+        state["failed_buckets"] = still_failed
+        state["partial"] = bool(still_failed)
+        state["backfilled_at"] = now.isoformat()
+        _write_replay_state(p, state)
+        print(f"✓ backfill: recovered {recovered_cards} card(s) from "
+              f"{len(failed)} dropped bucket(s); {len(still_failed)} still "
+              f"failing, {len(gone)} un-backfillable", file=sys.stderr)
 
 
 def _run_reconcile_only(project: Path, board: Path) -> None:
@@ -911,7 +1010,9 @@ def run(project: Path, board: Path, port: int, days: int,
             # #627: stamp the gate with the partial-failure record. Gate STILL
             # reopens (completed_card_replay=1) so recon isn't stuck (#384), but
             # the dropped buckets are recorded rather than declared a clean fill.
-            _mark_replay_complete(board, failed_buckets=failed_buckets)
+            # #645: record bucket_min so next SessionStart can auto-backfill them.
+            _mark_replay_complete(board, failed_buckets=failed_buckets,
+                                  bucket_min=bucket_min)
         # #627: a partial fill must be VISIBLE — loud stderr + a degraded final
         # HUD instead of a clean "✓ COMPLETE", so the user knows to re-run.
         if failed_buckets:
@@ -1034,7 +1135,11 @@ def main():
                          "there's nothing new). No card creation.")
     args = ap.parse_args()
     if args.reconcile_only:
-        _run_reconcile_only(args.project.resolve(), args.board.resolve())
+        proj, brd = args.project.resolve(), args.board.resolve()
+        # #645: recover any buckets a prior bootstrap dropped (partial fill)
+        # BEFORE reconciling, so the recovered cards are reconciled too.
+        _backfill_failed_buckets(proj, brd)
+        _run_reconcile_only(proj, brd)
         return
     if args.estimate_only:
         est = estimate_fill(
