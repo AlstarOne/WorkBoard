@@ -9,6 +9,36 @@ uses date-stamped pre-1.0 development entries until the first tagged release.
 
 Pre-release hardening toward `v1.0.0-rc.1`. Built across Plan v2 phases 0–6.
 
+### 0.9.27 — Pre-release polish: docs, hygiene, multi-session UX (#563/#658/#659/#610/#385) (2026-06-17)
+
+- **Adoption-focused README + `docs/` entry point + MIT LICENSE (#563).** Rewrote
+  the README into a claude-mem-style landing page (problem/fix, hook-enforced
+  tracking, prominent install, quick start, configuration, peer comparison).
+  Added `docs/README.md` as a clean index so newcomers land on user docs, not
+  internal notes. Added the actual MIT `LICENSE` file the badge/footer claimed.
+- **`dev/` excluded from the public plugin (#658).** Maintainer-only tooling
+  (smoke tests, sims, benchmarks, git-hooks, session loggers — 22 files) was
+  shipping to the marketplace install. Gitignored the whole folder and
+  `git rm --cached`'d it; files stay on disk locally. No runtime code depended
+  on `dev/`.
+- **Column-title text-selection no longer sticks blue until you open/close a
+  card (#659).** Clicking outside a focused column title now blurs it (committing
+  any rename) and clears the stray selection — same root cause as #555, capture-
+  phase `mousedown` so the drag handlers can't swallow it.
+- **Removed the false-firing "Board changed in another session" undo
+  popup (#610).** The guard probed `/rev` and confirmed on ANY rev delta, but
+  this agent's own `card.py` writes bump rev constantly — so it false-fired on
+  nearly every Cmd/Ctrl+Z (worse with multiple `?sid` sessions). The board is
+  last-writer-wins by design (#609) and undo is reversible via the redo stack,
+  so the guard was belt-and-suspenders; auto-accept to kill the popup.
+- **`_bootstrapFillSeen` no longer sticks past its run (#385).** Was only reset
+  inside the `phase==='reconcile' && _bootstrapFillSeen` branch, so any fill
+  whose final wasn't a bootstrap-reconcile left the flag set → a later
+  standalone live recon was misclassified as a bootstrap and fired a spurious
+  full-board `flipResort`. Now capture-then-clear on EVERY `final`. (Residual:
+  an abnormally-bailed reconcile that emits zero `final` still needs the
+  backend `after_fill` signal — tracked as #662.)
+
 ### 0.9.26 — Discarded fixes + collapsible Done-by-day index (#650/#651/#652/#653) (2026-06-17)
 
 - **Discarded cards no longer vanish on hard refresh (#650).** The Discarded column

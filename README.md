@@ -6,7 +6,7 @@
 
 **So you never lose an idea, never forget a half-finished task, and never have to ask *"did you update the board?"* again.**
 
-![Version](https://img.shields.io/badge/version-0.9.26-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![For Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-8A2BE2) ![Runs locally](https://img.shields.io/badge/runs-100%25%20local-success) ![No account](https://img.shields.io/badge/account-none-lightgrey)
+![Version](https://img.shields.io/badge/version-0.9.27-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![For Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-8A2BE2) ![Runs locally](https://img.shields.io/badge/runs-100%25%20local-success) ![No account](https://img.shields.io/badge/account-none-lightgrey)
 
 <!-- Drop a screenshot or GIF of the live board here: docs/assets/board-screenshot.png -->
 <!-- ![The WorkBoard live board](docs/assets/board-screenshot.png) -->
