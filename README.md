@@ -80,7 +80,7 @@ A live, animated kanban that runs entirely on your machine. Cards pop in with ov
 
 ---
 
-## 📦 Installation
+## Installation
 
 WorkBoard runs as a Claude Code plugin. Pick one of two paths.
 
@@ -115,7 +115,7 @@ cd WorkBoard
 
 ---
 
-## 🚀 Quick start
+## Quick start
 
 Once installed, you don't run commands — you just talk to Claude normally. The board fills itself:
 
@@ -133,7 +133,7 @@ Then open **http://127.0.0.1:7891** and watch it move.
 
 ---
 
-## 🛠️ How it works
+## How it works
 
 - **The board stays in sync by itself.** Bundled Claude Code hooks card work as it happens — the board can't silently drift mid-session.
 - **The board is the source of truth — not chat memory.** Claude reads it at session start, updates it as it works, and signs off at session end. Nothing gets dropped between sessions.
@@ -193,7 +193,7 @@ But **they're complements, not competitors**: claude-mem is your memory; WorkBoa
 
 ---
 
-## 📚 Learn more
+## Learn more
 
 - [`docs/KEY_FEATURES.md`](docs/KEY_FEATURES.md) — the full feature tour
 - [`docs/TOKEN_BUDGET.md`](docs/TOKEN_BUDGET.md) — measured token cost vs. peer memory tools
