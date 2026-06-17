@@ -38,8 +38,9 @@ board/recon_pending.json
 # local plugin-reinstall backups (machine state, never ship)
 .reinstall-backups/
 
-# benchmark run output (transient byproduct, regenerated per run)
-dev/bench_results/
+# Maintainer-only dev tooling — tests, sims, benchmarks, git-hooks, session
+# loggers. Never ship to the public plugin/marketplace (it's "dev", not runtime).
+dev/
 
 # Added by board-steward — local board data may contain secrets
 board/.replay_state.json
