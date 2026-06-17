@@ -9,6 +9,36 @@ uses date-stamped pre-1.0 development entries until the first tagged release.
 
 Pre-release hardening toward `v1.0.0-rc.1`. Built across Plan v2 phases 0–6.
 
+### 0.9.28 — README showcase + Apache-2.0 license + small UX fixes (2026-06-17)
+
+- **License: MIT → Apache-2.0.** Deliberate switch for a primitive that
+  embeds in others' workflows — the explicit patent grant matters in
+  dev-tool ecosystems (MCP servers, IDE plugins, agent harnesses). Full
+  Apache-2.0 boilerplate in `LICENSE`; `README` License section explains
+  the choice.
+- **README is now a real product showcase.** Animated demos on the landing
+  page: bootstrap → History Replay (`workflow-bootstrap.gif`), live
+  In-Progress pulse (`inprogress-pulsating.gif`), the bug round-trip
+  (`bug-to-and-fro.gif`), and subtasks ticking off (`subtasks-incremental.gif`
+  + `actual-card-subtasks.png`). Story flows in product-narrative order:
+  live tracking → bug lifecycle → granular progress.
+- **`docs/COMPARISON.md` (new).** Honest WorkBoard-vs-claude-mem
+  comparison: the "knowledge graph of work" vs "memory store" framing,
+  decision matrix, and an explicit "where each genuinely wins" section.
+  Linked from README.
+- **`docs/README.md` index** updated to surface user docs (KEY_FEATURES,
+  TOKEN_BUDGET, COMPARISON, BOOTSTRAP, DISCOVERY, PLAYBOOK, DEVELOPMENT)
+  separately from internal/dev notes.
+- **Drop "· N items" from the First-run sweep divider (#50).** The count
+  caused confusion ("is the divider counting itself?"). It wasn't —
+  `section-header` was always excluded from `victims` — but the count
+  added no value on a divider whose swept cards sit immediately below it.
+- **Clear stray multi-element text selection on background click (#51).**
+  The #659 deselect handler bailed when no single contentEditable was
+  focused, so drag-selecting across multiple column headers left a
+  persistent blue blob. Now also clears any non-collapsed Range when
+  clicking outside both the selection and any editable surface.
+
 ### 0.9.27 — Pre-release polish: docs, hygiene, multi-session UX (#563/#658/#659/#610/#385) (2026-06-17)
 
 - **Adoption-focused README + `docs/` entry point + MIT LICENSE (#563).** Rewrote
