@@ -44,3 +44,6 @@ dev/
 
 # Added by board-steward — local board data may contain secrets
 board/.replay_state.json
+
+# local README preview (gitignored — local-only convenience)
+README.preview.html
