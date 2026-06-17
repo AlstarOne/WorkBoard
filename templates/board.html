@@ -990,20 +990,27 @@
   .link-chip .link-remove:hover { color: var(--red); }
   .link-chip.orphan { background: #f0f0f3; color: var(--muted); border-color: var(--card-border); font-weight: 400; }
 
-  /* Day-header rows in the Done column (group by doneAt date) */
+  /* Day-header rows in the Done column (group by doneAt date) — #652 collapsible */
   .day-header {
     font-size: 10px; font-weight: 700; text-transform: uppercase;
     letter-spacing: .08em; color: var(--col-header);
     padding: 8px 6px 4px; margin-top: 4px;
     border-top: 1px solid rgba(94,108,132,.18);
     display: flex; align-items: center; justify-content: space-between;
+    cursor: pointer; user-select: none;
   }
   .day-header:first-child { border-top: 0; margin-top: 0; padding-top: 2px; }
+  .day-header:hover { color: var(--ink); }
+  .day-header .day-head-left { display: flex; align-items: center; gap: 5px; min-width: 0; }
+  .day-header .day-chevron { font-size: 8px; width: 8px; flex: none; opacity: .6; }
+  .day-header.collapsed .day-count { background: #cdd0d6; }
   .day-header .day-count {
     background: #dfe1e6; color: var(--col-header);
     font-size: 9px; padding: 1px 6px; border-radius: 8px;
     font-weight: 600; letter-spacing: 0;
   }
+  .icon-btn.collapse-all-btn { opacity: .55; font-size: 12px; }
+  .icon-btn.collapse-all-btn:hover { opacity: 1; }
 
   /* ============= VIEW TOGGLE + CALENDAR ============= */
   .view-toggle {
@@ -1740,6 +1747,43 @@ let _openCardId = null;        // currently-open modal card
 // v2: track per-card {updatedAt|column} between polls so we can flash changed cards.
 let _prevSnapshot = new Map(); // id → "updatedAt|column" from previous render
 let _flashIds = new Set();     // ids to flash on the upcoming render
+// #652 — collapsible Done-by-day groups. Set of collapsed day keys (ymd strings),
+// persisted. This is a render-time FILTER only — it NEVER mutates state.cards,
+// doneAt, or card order, so flying cards and flipResort sorting are untouched.
+let _collapsedDays = new Set();
+try { _collapsedDays = new Set(JSON.parse(localStorage.getItem('wbCollapsedDoneDays') || '[]')); } catch (e) {}
+function _saveCollapsedDays() {
+  try { localStorage.setItem('wbCollapsedDoneDays', JSON.stringify([..._collapsedDays])); } catch (e) {}
+}
+// The timestamp a Done card is GROUPED by — mirrors the render's doneSortTs:
+// 'discovered' bootstrap cards group by createdAt (historical), live by doneAt.
+function _doneGroupTs(c) {
+  return (c.tags && c.tags.includes('discovered'))
+    ? (c.createdAt || c.doneAt || c.updatedAt)
+    : (c.doneAt || c.updatedAt || c.createdAt);
+}
+function _doneDays() {
+  const s = new Set();
+  ((state && state.cards) || []).forEach(c => {
+    if (c.column !== 'done') return;
+    const ts = _doneGroupTs(c);
+    s.add(ts ? localYmd(ts) : 'unknown');
+  });
+  return [...s];
+}
+function _toggleDayCollapsed(day) {
+  const wasCollapsed = _collapsedDays.has(day);
+  if (wasCollapsed) _collapsedDays.delete(day); else _collapsedDays.add(day);
+  _saveCollapsedDays();
+  render();
+  if (wasCollapsed) {   // just expanded → scroll it into view (#652 subtask 4)
+    requestAnimationFrame(() => {
+      const sel = (window.CSS && CSS.escape) ? CSS.escape(day) : day.replace(/"/g, '\\"');
+      const el = document.querySelector('.day-header[data-day="' + sel + '"]');
+      if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  }
+}
 let _colDragRects = null;      // id → DOMRect at dragstart (for FLIP)
 // #119 — live iPhone-style card reflow during drag.
 // dragstart records source; column-body dragover computes insertion slot
@@ -5631,6 +5675,29 @@ function renderColumn(col, cards) {
   count.textContent = cards.length;
   hdr.appendChild(count);
 
+  // #652 — Collapse/expand-ALL days in the Done column. Collapsing every day turns
+  // Done into a compact dated index (one row per day + count) for at-a-glance
+  // wayfinding + click-to-jump. Shown only for Done with >1 day group.
+  if (col.id === 'done' || /^done$/i.test(col.name || '')) {
+    const days = _doneDays();
+    if (days.length > 1) {
+      const anyExpanded = days.some(d => !_collapsedDays.has(d));
+      const allBtn = document.createElement('button');
+      allBtn.className = 'icon-btn collapse-all-btn';
+      allBtn.textContent = anyExpanded ? '⊟' : '⊞';
+      allBtn.title = anyExpanded ? 'Collapse all days (index view)' : 'Expand all days';
+      allBtn.setAttribute('aria-label', allBtn.title);
+      allBtn.onclick = (e) => {
+        e.stopPropagation();
+        if (anyExpanded) days.forEach(d => _collapsedDays.add(d));
+        else days.forEach(d => _collapsedDays.delete(d));
+        _saveCollapsedDays();
+        render();
+      };
+      hdr.appendChild(allBtn);
+    }
+  }
+
   // #551 — Empty Discarded affordance: a subtle 🧹 in the Discarded column header,
   // shown ONLY when it holds cards (nothing to sweep otherwise). Discoverable but
   // not shouty (low opacity → red-tinted on hover); the confirm dialog gates it.
@@ -5799,9 +5866,7 @@ function renderColumn(col, cards) {
     // so they'd all bunch under "today". For those, key off createdAt (the
     // historical bucket time) instead. Live cards (no 'discovered') keep doneAt,
     // preserving the "shipped on <day>" grouping. No new tag — reuses 'discovered'.
-    const doneSortTs = c => (c.tags && c.tags.includes('discovered'))
-      ? (c.createdAt || c.doneAt || c.updatedAt)
-      : (c.doneAt || c.updatedAt || c.createdAt);
+    const doneSortTs = _doneGroupTs;   // #652 — shared with the collapse helpers
     const groups = {};
     cards.forEach(c => {
       const src = doneSortTs(c);
@@ -5809,16 +5874,35 @@ function renderColumn(col, cards) {
       (groups[day] = groups[day] || []).push(c);
     });
     Object.keys(groups).sort().reverse().forEach(day => {
+      // #652 — auto-expand a collapsed day if a card just landed in it (flash),
+      // so shipping into a folded day never makes the card silently "vanish".
+      if (_collapsedDays.has(day) && groups[day].some(c => _flashIds.has(c.id))) {
+        _collapsedDays.delete(day); _saveCollapsedDays();
+      }
+      const collapsed = _collapsedDays.has(day);
       const hdr = document.createElement('div');
-      hdr.className = 'day-header';
+      hdr.className = 'day-header' + (collapsed ? ' collapsed' : '');
+      hdr.dataset.day = day;
+      hdr.setAttribute('role', 'button');
+      hdr.setAttribute('aria-expanded', String(!collapsed));
+      const left = document.createElement('span');
+      left.className = 'day-head-left';
+      const chev = document.createElement('span');
+      chev.className = 'day-chevron';
+      chev.textContent = collapsed ? '▸' : '▾';
+      left.appendChild(chev);
       const lbl = document.createElement('span');
+      lbl.className = 'day-label';
       lbl.textContent = formatDayHeader(day);
-      hdr.appendChild(lbl);
+      left.appendChild(lbl);
+      hdr.appendChild(left);
       const ct = document.createElement('span');
       ct.className = 'day-count';
       ct.textContent = groups[day].length;
       hdr.appendChild(ct);
+      hdr.addEventListener('click', () => _toggleDayCollapsed(day));
       body.appendChild(hdr);
+      if (collapsed) return;   // #652 — render-time FILTER: fold this day's cards (data untouched)
       // #89 BOARD-DONE-LIFO — within each day group, order latest-resolved
       // first so the most recently shipped card sits at the top of its day.
       const sorted = groups[day].slice().sort((a, b) => {
