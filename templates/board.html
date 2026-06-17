@@ -5123,6 +5123,28 @@ function _restoreCalScroll() {
   if (w && _calScrollY) w.scrollTop = _calScrollY;
 }
 
+// #722 — calendar filter chips. Two groups: status (done/open) and priority
+// (critical/mid/low). Within a group → OR (clicking Critical + Mid shows both).
+// Between groups → AND (clicking Done + Critical shows ONLY done-critical cards,
+// not done-OR-critical). 'created' is a wildcard that passes everything.
+// Was OR everywhere, which made "Done + Critical" surface every done card +
+// every open critical — the Critical filter looked like it didn't register.
+function _calCardMatchesFilter(card) {
+  if (_calFilter.size === 0) return true;
+  if (_calFilter.has('created')) return true;
+  const wantDone = _calFilter.has('done');
+  const wantOpen = _calFilter.has('open');
+  if (wantDone || wantOpen) {
+    const isDone = card.column === 'done';
+    if (!((wantDone && isDone) || (wantOpen && !isDone))) return false;
+  }
+  const prioKeys = ['critical', 'mid', 'low'].filter(k => _calFilter.has(k));
+  if (prioKeys.length > 0) {
+    if (!prioKeys.includes(card.priority)) return false;
+  }
+  return true;
+}
+
 function renderCalendar() {
   const cal = $('#calendar');
   // Save scroll from the about-to-be-clobbered DOM before innerHTML wipe.
@@ -5297,18 +5319,7 @@ function renderCalendar() {
         if (card.column === 'ideas') return false;
         const refTs = card.doneAt || card.createdAt;
         if (localYmd(refTs) !== ds) return false;
-        // No filters → show all. Otherwise card passes if it matches ANY
-        // active filter (union/OR), so user can combine e.g. Done + Critical.
-        // 'created' = wildcard (every card was created) — passes everything.
-        if (_calFilter.size === 0) return true;
-        if (_calFilter.has('created')) return true;
-        for (const f of _calFilter) {
-          if (f === 'done' && card.column === 'done') return true;
-          if (f === 'open' && card.column !== 'done') return true;
-          if ((f === 'critical' || f === 'mid' || f === 'low')
-              && card.column !== 'done' && card.priority === f) return true;
-        }
-        return false;
+        return _calCardMatchesFilter(card);
       }).sort((a, b) => {
         if (a.column === 'done' && b.column !== 'done') return -1;
         if (b.column === 'done' && a.column !== 'done') return 1;
@@ -5435,15 +5446,7 @@ function _cardsForDay(ds) {
     if (card.column === 'ideas') return false;
     const refTs = card.doneAt || card.createdAt;
     if (localYmd(refTs) !== ds) return false;
-    if (_calFilter.size === 0) return true;
-    if (_calFilter.has('created')) return true;
-    for (const f of _calFilter) {
-      if (f === 'done' && card.column === 'done') return true;
-      if (f === 'open' && card.column !== 'done') return true;
-      if ((f === 'critical' || f === 'mid' || f === 'low')
-          && card.column !== 'done' && card.priority === f) return true;
-    }
-    return false;
+    return _calCardMatchesFilter(card);
   }).sort((a, b) => {
     if (a.column === 'done' && b.column !== 'done') return -1;
     if (b.column === 'done' && a.column !== 'done') return 1;
