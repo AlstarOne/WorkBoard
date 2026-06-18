@@ -104,32 +104,7 @@ See what shipped — and what's **still open** — laid out by date. Catch misse
 1. **WorkBoard is a structured knowledge-graph of the _products & features you shipped_** — mem0, claude-mem, and Letta just store memory.
 2. **It deterministically identifies what's in memory** — a precise, structured lookup, not a probabilistic *"full dump."*
 
-Those tools embed past chat into a vector store and recall fuzzy chunks by similarity. WorkBoard records the **outcomes** as a graph you can walk. Measured head-to-head on real history — same corpus, same tokenizer ([**full receipts**](Research/token_comparison/MASTER_SUMMARY.md)):
-
-| What you're doing | WorkBoard | Memory tools (mem0 · claude-mem · Letta) | Winner |
-|---|---|---|:--|
-| **Build** the memory | deterministic hourly digests, few calls | an LLM reads & compresses **every session** | 🟢 **WorkBoard — ~98–99% fewer tokens** |
-| **Persist** as you work | inline carding, **0 model calls** | an LLM call **every session** (Letta: every *turn*) | 🟢 **WorkBoard — free** |
-| **Run** the whole loop *(per project)* | structured + free writes | per-session / per-turn LLM tax | 🟢 **WorkBoard — 34–81% fewer tokens** |
-| **Recall** a single fact | a structured card (title · origin · writeup · links) | a fuzzy vector chunk | mem0 / Letta leaner; WorkBoard beats claude-mem **25.9%** |
-| **Read it yourself** | a live kanban — what shipped, why, what's open | opaque embeddings | 🟢 **WorkBoard** |
-
-The 130 KB+ `board.json` is **never auto-loaded** — context stays clean no matter how big the board grows.
-
----
-
-## 🥊 Controversy — claims vs. what we measured
-
-Every memory tool markets a big efficiency number. We reproduced their setups on the **same corpus and tokenizer**, with settings that *favour the peer* — and several headline claims don't survive a real run. **Reproduce any of it yourself** ([harness + receipts](Research/token_comparison/MASTER_SUMMARY.md)); show us where we're wrong and we'll fix the number.
-
-- **The "90% / 95%" headlines are measured against the _dumbest possible baseline_ — not a rival.** mem0's *"90% fewer tokens"* and claude-mem's *"~95%"* are both vs **pasting your entire history into every prompt**. Head-to-head against a structured ledger, the real gap is **34–53% on the loop** — and on *building* memory WorkBoard is **~98–99% lighter**.
-- **claude-mem can't actually remember your past.** A real sandboxed run (node 22 + Bun + uv + Chroma worker) found **no bulk / backfill command** — it only compresses *forward* from install. To "remember" 100 past sessions it would run 100 compression calls. WorkBoard mines your history.
-- **claude-mem compresses on your full subscription tier — every session.** Not a cheap or detached tier: it spends full-price model compute each session just to remember.
-- **graphify ships no hook, despite its docs describing one.** Its docs describe a `PreToolUse` hook that fires on every file read; the real install (`graphifyy 0.8.41`) writes **no `settings.json` and no hook entry**. *(In graphify's favour that means 0 per-prompt cost — but the advertised integration isn't what installs.)*
-
-### Head-to-head, by competitor
-
-*Measured head-to-head — same tokenizer (`tiktoken cl100k`); settings favour the peer.*
+Measured head-to-head on real history — **same corpus, same tokenizer** (`tiktoken cl100k`); settings *favour the peer*. [**Full receipts**](Research/token_comparison/MASTER_SUMMARY.md).
 
 #### WorkBoard vs mem0
 
@@ -169,6 +144,19 @@ Every memory tool markets a big efficiency number. We reproduced their setups on
 | Per recall | 2,399 *(work Qs)* | 1,374 *(code Qs)* | different questions |
 | Write / keep current | 0 | 0 | tie |
 | Big artifact autoload | never | never | tie |
+
+The 130 KB+ `board.json` is **never auto-loaded** — context stays clean no matter how big the board grows.
+
+---
+
+## 🥊 Controversy — claims vs. what we measured
+
+Every memory tool markets a big efficiency number. We reproduced their setups on the **same corpus and tokenizer**, with settings that *favour the peer* — and several headline claims don't survive a real run. **Reproduce any of it yourself** ([harness + receipts](Research/token_comparison/MASTER_SUMMARY.md)); show us where we're wrong and we'll fix the number.
+
+- **The "90% / 95%" headlines are measured against the _dumbest possible baseline_ — not a rival.** mem0's *"90% fewer tokens"* and claude-mem's *"~95%"* are both vs **pasting your entire history into every prompt**. Head-to-head against a structured ledger, the real gap is **34–53% on the loop** — and on *building* memory WorkBoard is **~98–99% lighter**.
+- **claude-mem can't actually remember your past.** A real sandboxed run (node 22 + Bun + uv + Chroma worker) found **no bulk / backfill command** — it only compresses *forward* from install. To "remember" 100 past sessions it would run 100 compression calls. WorkBoard mines your history.
+- **claude-mem compresses on your full subscription tier — every session.** Not a cheap or detached tier: it spends full-price model compute each session just to remember.
+- **graphify ships no hook, despite its docs describing one.** Its docs describe a `PreToolUse` hook that fires on every file read; the real install (`graphifyy 0.8.41`) writes **no `settings.json` and no hook entry**. *(In graphify's favour that means 0 per-prompt cost — but the advertised integration isn't what installs.)*
 
 ---
 
