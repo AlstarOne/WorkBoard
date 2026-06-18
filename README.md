@@ -177,17 +177,6 @@ WorkBoard is cheaper because it **only records what gets carded** — structured
 
 ---
 
-## 🥊 Controversy — claims vs. what we measured
-
-Every memory tool markets a big efficiency number. We reproduced their setups on the **same corpus and tokenizer**, with settings that *favour the peer* — and several headline claims don't survive a real run. **Reproduce any of it yourself** ([harness + receipts](Research/token_comparison/MASTER_SUMMARY.md)); show us where we're wrong and we'll fix the number.
-
-- **The "90% / 95%" headlines are measured against the _dumbest possible baseline_ — not a rival.** mem0's *"90% fewer tokens"* and claude-mem's *"~95%"* are both vs **pasting your entire history into every prompt**. Head-to-head against a structured ledger, the real gap is **34–53% on the loop** — and on *building* memory WorkBoard is **~98–99% lighter**.
-- **claude-mem can't actually remember your past.** A real sandboxed run (node 22 + Bun + uv + Chroma worker) found **no bulk / backfill command** — it only compresses *forward* from install. To "remember" 100 past sessions it would run 100 compression calls. WorkBoard mines your history.
-- **claude-mem compresses on your full subscription tier — every session.** Not a cheap or detached tier: it spends full-price model compute each session just to remember.
-- **graphify ships no hook, despite its docs describing one.** Its docs describe a `PreToolUse` hook that fires on every file read; the real install (`graphifyy 0.8.41`) writes **no `settings.json` and no hook entry**. *(In graphify's favour that means 0 per-prompt cost — but the advertised integration isn't what installs.)*
-
----
-
 ## Under the hood
 
 ### 🔒 Hook-enforced — the board literally can't drift

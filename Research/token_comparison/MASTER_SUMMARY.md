@@ -104,24 +104,6 @@ Each peer on its own axes (same tokenizer, `tiktoken cl100k`; settings favor the
 
 ---
 
-## ⚡ Controversy — claims vs. what we actually measured
-
-> Every figure below is from a **real run** or the vendor's **own** published numbers, on the same corpus and tokenizer, with settings that *favor the peer*. We'll correct anything demonstrably wrong — **reproduce it yourself**; each study folder ships the harness.
-
-**1. The "90% / 95%" headlines are measured against the *dumbest possible baseline* — not a competitor.**
-mem0's *"90% fewer tokens"* and claude-mem's *"~95% / ~10×"* are both vs **full-context / full-transcript reload** — i.e. pasting your *entire* history into every prompt. That isn't "more efficient than the alternatives"; it's "cheaper than the worst possible approach." Run it head-to-head and the real gaps are **34–53% on the loop**, and on *building* memory WorkBoard is **~98–99% lighter** than both.
-
-**2. claude-mem can't actually remember your past — it only records forward from install.**
-Our real, fully-sandboxed run (node 22 + Bun + uv + Chroma worker) found **no bulk / bootstrap / backfill command** anywhere in claude-mem's CLI or worker routes. It compresses *new* sessions via a live hook; to "remember" 100 past sessions you'd replay each through the summarize hook = **100 compression calls**. WorkBoard explicitly mines your history. *(`claude-mem/REAL_RUN_FINDINGS.md`)*
-
-**3. claude-mem's "memory" runs on your full-price model tier — every session.**
-That compression call goes through the Claude Agent SDK on your **main subscription tier**, *not* a cheap or detached tier. Every session silently spends full-tier compute to compress — measured in the same run, and it makes WorkBoard's *0 model calls* look even better.
-
-**4. graphify ships no hook — despite its docs describing one.**
-graphify's rendered docs describe a **PreToolUse hook that fires on every file read**. The real sandboxed install (`graphifyy 0.8.41`) writes **no `settings.json` and no hook entry** — that hook never runs. *(To graphify's credit, this makes its per-prompt cost 0 — but the advertised integration isn't what installs.)* *(`graphify-comparison/REPORT.md`)*
-
-**The pattern:** the splashy efficiency numbers in this space are measured against naive baselines, never head-to-head — and at least one tool's docs describe an integration its installer doesn't ship. WorkBoard publishes the head-to-head, the harness, and the corpus fingerprints, so nobody has to take our word for it. **Show us where we're wrong and we'll fix the number.**
-
 ---
 
 ## How to read this (the recurring gotcha)
