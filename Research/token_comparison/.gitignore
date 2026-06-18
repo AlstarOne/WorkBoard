@@ -8,3 +8,6 @@
 **/__pycache__/
 *.pyc
 *.board.lock
+
+# Private competitor-controversy notes — never publish.
+CONTROVERSY.private.md
