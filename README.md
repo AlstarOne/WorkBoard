@@ -4,7 +4,7 @@
 
 ### A live knowledge graph of your work.
 
-**Never lose an idea. Never lose a workflow.**
+**Never lose an idea. Never lose a workflow. Visualise your memory.**
 
 ![Version](https://img.shields.io/badge/version-0.9.30-blue) ![License](https://img.shields.io/badge/license-Apache--2.0-green) ![For Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-8A2BE2) ![Runs locally](https://img.shields.io/badge/runs-100%25%20local-success) ![No account](https://img.shields.io/badge/account-none-lightgrey)
 
@@ -99,16 +99,17 @@ See what shipped — and what's **still open** — laid out by date. Catch misse
 
 ## 📊 Token-Efficiency Summary — WorkBoard vs mem0 · claude-mem · Letta · graphify
 
-**They remember your conversations. WorkBoard remembers your _work_.**
+**WorkBoard remembers your _work_. They remember your conversations.**
 
 1. **WorkBoard is a structured knowledge-graph of the _products & features you shipped_** — mem0, claude-mem, and Letta just store memory.
 2. **It deterministically identifies what's in memory** — a precise, structured lookup, not a probabilistic *"full dump."*
+3. **It never spins up a separate session or model call.** claude-mem, mem0 and Letta fire a dedicated extraction/compression call to *remember*; WorkBoard's carding is **inline in your normal turn** and runs **only when there's something to record** — so it never "dumps" your history or burns extra tokens.
 
 Measured head-to-head on real history — **same corpus, same tokenizer** (`tiktoken cl100k`); settings *favour the peer*. [**Full receipts**](Research/token_comparison/MASTER_SUMMARY.md).
 
 #### WorkBoard vs mem0
 
-| Axis | WB | mem0 | Winner |
+| Axis | WorkBoard (WB) | mem0 | Winner |
 |---|--:|--:|:--|
 | Build the memory | 64,162 tok | 5,095,769 tok | 🟢 **WB 98.7% cheaper** |
 | Persist / session | **0 model calls** | 1 LLM extract call (~5,462 tok) + embed | 🟢 **WB (free)** |
@@ -118,7 +119,7 @@ Measured head-to-head on real history — **same corpus, same tokenizer** (`tikt
 
 #### WorkBoard vs claude-mem
 
-| Axis | WB | claude-mem | Winner |
+| Axis | WorkBoard (WB) | claude-mem | Winner |
 |---|--:|--:|:--|
 | Build the memory | ~10,546 tok | 5,095,769 tok | 🟢 **WB ~99% cheaper** |
 | Persist / session | **0 model calls** | 1 compression call *(full tier)* | 🟢 **WB (free)** |
@@ -128,7 +129,7 @@ Measured head-to-head on real history — **same corpus, same tokenizer** (`tikt
 
 #### WorkBoard vs Letta (MemGPT)
 
-| Axis | WB | Letta | Winner |
+| Axis | WorkBoard (WB) | Letta | Winner |
 |---|--:|--:|:--|
 | In-context memory / turn | 306 tok *(0 carried)* | 3,444 tok *(blocks + tool schemas + prompt)* | 🟢 **WB** |
 | Persist / session | **0 model calls** | LLM tool-call per write + compaction | 🟢 **WB** |
@@ -137,7 +138,7 @@ Measured head-to-head on real history — **same corpus, same tokenizer** (`tikt
 
 #### WorkBoard vs graphify *(code knowledge-graph — different domain)*
 
-| Axis | WB | graphify | Winner |
+| Axis | WorkBoard (WB) | graphify | Winner |
 |---|--:|--:|:--|
 | Always-on / prompt | 306 tok | 61 tok *(cached)* | graphify |
 | SKILL.md on engage | 5,898 tok | 8,245 tok *(+9,704 refs)* | 🟢 **WB 28.5% cheaper** |
