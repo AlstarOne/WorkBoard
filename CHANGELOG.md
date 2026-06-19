@@ -9,6 +9,14 @@ uses date-stamped pre-1.0 development entries until the first tagged release.
 
 Pre-release hardening toward `v1.0.0-rc.1`. Built across Plan v2 phases 0–6.
 
+### 0.9.37 — Faster LLM-reconcile card animation (2026-06-19)
+
+- **LLM reconcile per-card glide 150ms → 60ms** (`scripts/hourly_reconcile.py`,
+  new `_RECONCILE_PACE_MS` constant) so a reconcile pass flies through stale-card
+  moves at the same pace as the bootstrap `speedup` tier instead of crawling. The
+  task→IP→done hop stays visible via the existing 0.35s In-Progress dwell. (Note:
+  the ~60–90s upfront cost is the Haiku decision call, not the animation.)
+
 ### 0.9.36 — Natural-language recall: `card.py recall` (BM25F) + `/check` skill (2026-06-19)
 
 - **`card.py recall "<words>"`** — deterministic natural-language search over the
