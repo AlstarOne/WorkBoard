@@ -111,7 +111,7 @@ See what shipped — and what's **still open** — laid out by date. Catch misse
    - **Title** — a one-line overview, for fast future retrieval
    - **Origin / why it exists** (+ **Notes**) — the context behind it
    - **✓ Writeup** — once it's done, *how* it was done (commits, files)
-5. **Retrieval is ~26× cheaper per correct answer — at ~0 inference tokens.** Finding a card runs a **local BM25 search**, so it spends **0 model-call tokens, no vector DB, no API** — the only cost is the handful of result titles surfaced into context (**~268 tokens per correct recall**). The vector memory systems (mem0, claude-mem, Letta) instead spend **~6,956 tokens per retrieval** *plus* an embedding API and a vector store. And the accuracy holds up against global IR benchmarks — [see **🎯 Retrieval accuracy — does it surface the *right* card?**](https://github.com/malcolm1232/WorkBoard#-retrieval-accuracy--does-it-surface-the-right-card).
+5. **Retrieval is ~26× cheaper per correct answer — at ~0 inference tokens while [maintaining benchmarked standards](https://github.com/malcolm1232/WorkBoard#-retrieval-accuracy--does-it-surface-the-right-card).** Finding a card runs a **local BM25 search**, so it spends **0 model-call tokens, no vector DB, no API** — but only **~268 tokens per correct recall**. *Meanwhile*, vector memory systems (mem0, claude-mem, Letta) spend **~6,956 tokens per retrieval** plus an embedding API and a vector store.
 6. **Recall is a cheap tree-walk.** An agent finds a past workflow by traversing the graph — reading the **title** first, the description *only if needed* → **origin / why** → **how it was done** — a handful of tokens, never a re-read of everything.
 
 *[**Read the full study here →**](Research/token_comparison/MASTER_SUMMARY.md)*
