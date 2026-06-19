@@ -373,6 +373,17 @@ def build_parser():
     ppl.add_argument("--count", action="store_true", help="emit just the open count (for shell scripts)")
     ppl.set_defaults(fn=cmd_prelaunch_check)
 
+    # recall (#781 H1) — natural-language card search; surfaces top matching
+    # TITLES (the cheap index layer), you then `card.py show <#>` for detail.
+    prec = sub.add_parser("recall",
+                          help="natural-language search — surface the top matching card "
+                               "titles (cheap, index layer). e.g. card.py recall \"the auth "
+                               "redirect bug\". Then `card.py show <#>` for detail.")
+    prec.add_argument("query", help="what you're trying to remember")
+    prec.add_argument("--top", type=int, default=3, help="how many matches (default 3)")
+    prec.add_argument("--json", action="store_true", help="emit JSON instead of text")
+    prec.set_defaults(fn=cmd_recall)
+
     # board-new (#775) — create + serve a brand-new EMPTY board for a project.
     # The easy "open a new workboard" front door: no chat-mining, own port.
     pbn = sub.add_parser("board-new",
@@ -400,7 +411,7 @@ _COUNTED_VERBS = ("add", "bug", "improve")
 # "the human is working on this board".
 _READ_ONLY_CMDS = frozenset({
     "show", "list", "digest", "query", "metrics", "export", "wiki",
-    "progress", "sweep-status", "prelaunch-check",
+    "progress", "sweep-status", "prelaunch-check", "recall",
 })
 # Note: `recover` is NOT read-only — `recover --apply` restores a backup
 # (atomic_save), the strongest "I'm working on this board" signal there is, so
@@ -462,6 +473,26 @@ def _hoist_board(argv):
             board = a.split("=", 1)[1]; i += 1; continue
         out.append(a); i += 1
     return board, out
+
+
+def cmd_recall(args, d, board):
+    """Natural-language recall (#781 H1): rank cards by the lexical matcher and
+    print the top matches as #N + title (the cheap index layer). Read-only — the
+    caller then `card.py show <#>` for any card's detail."""
+    import json as _json
+    import text_search
+    hits = text_search.rank(args.query, d.get("cards", []), top=args.top)
+    if getattr(args, "json", False):
+        print(_json.dumps([{"num": c.get("num"), "title": c.get("title"),
+                            "column": c.get("column"), "score": round(s, 2)}
+                           for s, c in hits], indent=2))
+        return
+    if not hits:
+        print("no strong match — try different words, or `card.py list`")
+        return
+    print(f"Top {len(hits)} match(es) — `card.py show <#>` for detail:")
+    for s, c in hits:
+        print(f"  #{c.get('num')}  {c.get('title')}   ({c.get('column')} · {s:.2f})")
 
 
 def cmd_board_new(args):
