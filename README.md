@@ -2,9 +2,9 @@
 
 # 🗂️ WorkBoard
 
-### A live knowledge graph of your work.
+### Live Workboard for Users and Agents
 
-**Never lose an idea. Never lose a workflow. Visualise your memory.**
+**Watch your work come to life — never lose an idea, never lose a workflow.**
 
 ![Version](https://img.shields.io/badge/version-0.9.30-blue) ![License](https://img.shields.io/badge/license-Apache--2.0-green) ![For Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-8A2BE2) ![Runs locally](https://img.shields.io/badge/runs-100%25%20local-success) ![No account](https://img.shields.io/badge/account-none-lightgrey)
 
