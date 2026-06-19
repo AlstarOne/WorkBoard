@@ -111,7 +111,7 @@ See what shipped — and what's **still open** — laid out by date. Catch misse
    - **Title** — a one-line overview, for fast future retrieval
    - **Origin / why it exists** (+ **Notes**) — the context behind it
    - **✓ Writeup** — once it's done, *how* it was done (commits, files)
-5. **Retrieval is ~26× cheaper per correct answer — at ~0 inference tokens while [maintaining benchmarked standards](https://github.com/malcolm1232/WorkBoard#-retrieval-accuracy--does-it-surface-the-right-card).** Finding a card runs a **local BM25 search**, so it spends **0 model-call tokens, no vector DB, no API** — but only **~268 tokens per correct recall**. *Meanwhile*, vector memory systems (mem0, claude-mem, Letta) spend **~6,956 tokens per retrieval** plus an embedding API and a vector store.
+5. **Retrieval is ~26× cheaper per correct answer — at ZERO inference tokens, while [holding a recognized benchmark standard](https://github.com/malcolm1232/WorkBoard#-retrieval-accuracy--does-it-surface-the-right-card).** Finding a card runs a **local BM25 search**: **ZERO model-call tokens, no vector DB, no API** — just **~268 tokens per correct recall**. *Meanwhile*, **mem0** spends **~6,956 tokens per retrieval** (claude-mem and Letta likewise inject **thousands** per recall), plus an embedding API and a vector store.
 6. **Recall is a cheap tree-walk.** An agent finds a past workflow by traversing the graph — reading the **title** first, the description *only if needed* → **origin / why** → **how it was done** — a handful of tokens, never a re-read of everything.
 
 *[**Read the full study here →**](Research/token_comparison/MASTER_SUMMARY.md)*
@@ -181,7 +181,7 @@ Head-to-head against a **real dense baseline** — OpenAI `text-embedding-3-smal
 
 | Query shape | WorkBoard `recall` (BM25F) | Dense vectors (measured) | Winner |
 |---|--:|--:|:--|
-| **Pinpoint** — exact `#627` / `f93dc43` / `board.html` | **1.00** | 0.40 | 🟢 **WB (decisive)** — embeddings *blur* literals |
+| **Pinpoint** — an exact reference (card #, commit SHA, filename) | **1.00** | 0.40 | 🟢 **WB (decisive)** — embeddings *blur* literals |
 | **Thematic** — open topic, fuzzy wording | 0.29 | **0.43** | dense *(the honest gap)* |
 | **Lifecycle** — "what shipped + what's open" | 0.50 + graph-walk | **0.67** | dense / WB-via-`--traverse` |
 | **Overall** | **hit@5 0.556** | hit@5 0.500 | ~tie |
