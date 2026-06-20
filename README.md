@@ -39,7 +39,7 @@ cd WorkBoard
 
 Run `./install.sh --dry-run` to preview the exact on-disk footprint before writing anything. See [`docs/INSTALL.md`](docs/INSTALL.md) for the full install reference and uninstall steps.
 
-**Requirements:** Claude Code · Python 3.9+ (standard library only, no `pip install`) · macOS / Linux / Windows. **No account, no cloud, no API key required.** (History Replay's optional bootstrap uses Claude Haiku — the cheapest tier — as a one-time, detached subprocess.)
+**Requirements:** Claude Code · Python 3.9+ (standard library only, no `pip install`) · macOS / Linux / Windows. **No account, no cloud, no API key required.** (History Replay's optional bootstrap uses Claude Haiku — the lowest-cost tier — as a one-time, detached subprocess.)
 
 ---
 
@@ -154,7 +154,7 @@ The net effect: **the user never has to ask "did you update the board?"** — an
 
 - **Reinforcement: advisory by default, strict on demand** — the Stop hook's sign-off backstop is silent and free (0 tokens, just writes a note). Power users opt in via `BOARD_STEWARD_STRICT=1` — same-turn enforcement that loops the agent back to card the work before ending its turn. Single-shot, with a hard-coded escape so a false positive can't trap the agent.
 
-- **History Replay — fly past work onto a fresh board** — on first run, a detached **Haiku** subprocess (cheapest tier) mines your past Claude Code sessions and reconstructs them as cards, flying them onto the board `task → in-progress → done`, complete with bug-bounces. Runs out-of-band so it never enters the interactive session's context.
+- **History Replay — fly past work onto a fresh board** — on first run, a detached **Haiku** subprocess (lowest-cost tier) mines your past Claude Code sessions and reconstructs them as cards, flying them onto the board `task → in-progress → done`, complete with bug-bounces. Runs out-of-band so it never enters the interactive session's context.
 
 - **Crash-safe by construction** — `flock` + rolling backups + a `recover` CLI to restore from any backup; `repair-links` to fix broken cross-card references; `migrate` to evolve the schema.
 

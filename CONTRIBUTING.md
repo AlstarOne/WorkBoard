@@ -35,7 +35,7 @@ python -m unittest discover -s tests -p "test_*.py" -v
 
 Run this from the repo root. All tests should pass before you open a pull request.
 
-**Note:** the install integration test (`tests/test_install.py` or similar) is
+**Note:** the install integration test (`tests/test_install_dryrun.py`) is
 **POSIX-only** and will be skipped automatically on Windows. All other tests run
 on both platforms.
 
