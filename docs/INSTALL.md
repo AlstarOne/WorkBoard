@@ -68,7 +68,7 @@ ${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json
 | Event | Script | What it does |
 |---|---|---|
 | `SessionStart` | `hook_session_start.sh` | Fires once per session. Injects a compact board digest (~222 tokens per `docs/TOKEN_BUDGET.md`) so Claude knows the current board shape without loading `board.json`. |
-| `UserPromptSubmit` | `hook_user_prompt.sh` | **Fires on every user prompt.** Injects a board-protocol reminder into context before Claude responds. This is the per-turn token cost (source: `docs/TOKEN_BUDGET.md`): **~309 tokens per prompt** (approximately 355 Claude tokens). Over a 50-turn session that is ~15,450 tokens — the dominant interactive overhead. The hook also auto-spawns the server if no live server is found on the board's designated port. |
+| `UserPromptSubmit` | `hook_user_prompt.sh` | **Fires on every user prompt.** Injects a board-protocol reminder into context before Claude responds. This is the per-turn token cost (source: `docs/TOKEN_BUDGET.md`): **~309 tokens per prompt** (approximately 355 Claude tokens). The nudge alone totals ~15,450 tokens over 50 turns (309 × 50); the full 50-turn session cost is ~15.7K tokens because `docs/TOKEN_BUDGET.md` also includes the SessionStart digest and skill-list description in the session total. This is the dominant interactive overhead. The hook also auto-spawns the server if no live server is found on the board's designated port. |
 | `PreToolUse` (matcher: `Edit|Write|MultiEdit|NotebookEdit`) | `hook_pre_tool_use.sh` | Fires before any file-mutating tool. Checks the LIVE protocol flash and auto-links the edited file to the active card (#102). |
 | `PreToolUse` (matcher: `Edit|Write|MultiEdit|NotebookEdit`) | `hook_card_before_edit.sh` | Fires before any file-mutating tool. Emits a non-blocking warning if no card is declared for the current edit (#75). |
 | `Stop` | `hook_stop.sh` | Fires when the agent finishes a turn (sign-off). Checks whether the turn's work was carded and whether anything is still In-Progress; can block the stop to force carding (#279/#359/#592). |
@@ -89,8 +89,7 @@ Created by `serve.py --bootstrap` inside the target project:
 ```
 <project>/board/board.json      # card data
 <project>/board/board.html      # board UI (served from skill template, not copied)
-<project>/.board-server.log     # server stdout/stderr
-<project>/board/.board-server.pid  # PID file (created by port registry)
+<project>/.board-server.log     # server stdout/stderr (source: install.sh, line that nohup-launches serve.py)
 ```
 
 `board.json` is the only persistent project-level data.  `board.html` is always
@@ -151,9 +150,9 @@ auto-spawn block).
 
 ## Uninstall
 
-`scripts/uninstall.sh` removes the runtime side-effects (autostart service,
-stray server process, legacy settings-based hooks, and optionally the port
-registry).  It does NOT delete plugin code or your `board/` directory.
+`scripts/uninstall.sh` removes the runtime side-effects (skill symlink, hooks,
+autostart service, stray server process, and optionally the port registry).
+It does NOT delete plugin code or your `board/` directory.
 
 Preview what would be removed:
 
@@ -164,9 +163,9 @@ bash scripts/uninstall.sh --dry-run
 Execute the uninstall:
 
 ```
-bash scripts/uninstall.sh           # remove autostart + legacy hooks
+bash scripts/uninstall.sh           # remove skill symlink, hooks, autostart, stray server
 bash scripts/uninstall.sh --port 7891  # also free a stray server on that port
-bash scripts/uninstall.sh --purge   # also remove ~/.board-steward/
+bash scripts/uninstall.sh --purge   # also remove ~/.board-steward/ port registry
 ```
 
 To remove the plugin skill itself, run inside Claude Code:
@@ -189,5 +188,7 @@ Source: `docs/TOKEN_BUDGET.md` (measured 2026-05-28, re-measured 2026-06-10).
 | board.json | never auto-loaded | On explicit Read only |
 
 The per-prompt UserPromptSubmit injection is the dominant interactive overhead.
-At 50 turns it totals ~15,450 tokens.  See `docs/TOKEN_BUDGET.md` for the full
-session cost model and trimming options.
+The nudge alone totals ~15,450 tokens over 50 turns (309 × 50); the full 50-turn
+session cost is ~15.7K tokens (adding the SessionStart digest and skill-list
+description — see `docs/TOKEN_BUDGET.md` for the complete session cost model and
+trimming options).

@@ -174,7 +174,7 @@ if [ "$DRY" = "1" ]; then
   echo "  1. skill     → symlink ${REPO}"
   echo "               → ${CFG_BASE}/skills/board-steward"
   echo "  2. hooks     → wire the board-steward hooks (SessionStart, UserPromptSubmit,"
-  echo "                 PreToolUse, Stop, SubagentStop) into ${CFG_BASE}/settings.json"
+  echo "                 PreToolUse, Stop) into ${CFG_BASE}/settings.json"
   echo "  3. server    → bootstrap a board in ${PROJECT}"
   echo "               → serve on http://127.0.0.1:${PORT} (sticky per-project port)"
   if [ "$DO_AUTOSTART" = "1" ]; then
