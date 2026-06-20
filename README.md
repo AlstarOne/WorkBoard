@@ -1,16 +1,22 @@
 <div align="center">
 
-# 🗂️ WorkBoard
+# WorkBoard
 
 ### Live Workboard for Users and Agents
 
-**Watch your work come to life — never lose an idea, never lose a workflow.**
+**Keep track of what's in progress, what shipped, and why — without losing context.**
 
-![Version](https://img.shields.io/badge/version-0.9.35-blue) ![License](https://img.shields.io/badge/license-Apache--2.0-green) ![For Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-8A2BE2) ![Runs locally](https://img.shields.io/badge/runs-100%25%20local-success) ![No account](https://img.shields.io/badge/account-none-lightgrey)
+![Version](https://img.shields.io/badge/version-0.9.35-blue) ![License](https://img.shields.io/badge/license-Apache--2.0-green) ![For Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-8A2BE2) ![Runs locally](https://img.shields.io/badge/runs-100%25%20local-success) ![No account](https://img.shields.io/badge/account-none-lightgrey) ![CI](https://github.com/AlstarOne/WorkBoard/actions/workflows/ci.yml/badge.svg)
 
 ![Watch a fresh board fill itself — History Replay flying past work onto the board on install](docs/assets/workflow-bootstrap.gif)
 
 </div>
+
+> **Status: experimental — pre-1.0.** WorkBoard is young and under active development.
+> This is a *hardened fork* of [malcolm1232/WorkBoard](https://github.com/malcolm1232/WorkBoard)
+> with an added test suite + CI, a safer network bind, and a more transparent
+> installer (`install.sh --dry-run`). Do not rely on it as your sole source of truth
+> for important work yet; try it first with `./install.sh --demo` or `--dry-run`.
 
 ---
 
@@ -23,13 +29,15 @@ Install from the plugin marketplace inside Claude Code:
 /plugin install board-steward@workboard
 ```
 
-Prefer to install from source? `git clone` it and run `./install.sh` — same result, no marketplace step:
+Prefer to install from source? Clone the hardened fork and run `./install.sh`:
 
 ```bash
-git clone https://github.com/malcolm1232/WorkBoard
+git clone https://github.com/AlstarOne/WorkBoard
 cd WorkBoard
-./install.sh   # sets up + auto-detects your projects and bootstraps a board
+./install.sh   # sets up, auto-detects your projects, and bootstraps a board
 ```
+
+Run `./install.sh --dry-run` to preview the exact on-disk footprint before writing anything. See [`docs/INSTALL.md`](docs/INSTALL.md) for the full install reference and uninstall steps.
 
 **Requirements:** Claude Code · Python 3.9+ (standard library only, no `pip install`) · macOS / Linux / Windows. **No account, no cloud, no API key required.** (History Replay's optional bootstrap uses Claude Haiku — the cheapest tier — as a one-time, detached subprocess.)
 
@@ -39,7 +47,7 @@ cd WorkBoard
 
 | # | Problem | How WorkBoard solves it |
 |---|---|---|
-| 1 | **Agent memory is for the agent only — invisible to you.** | WorkBoard is a **visual knowledge-graph for both users *and* agents** — you *see* your work as a live board; the agent walks the same graph. |
+| 1 | **Agent memory is for the agent only — invisible to you.** | WorkBoard is a **visual knowledge graph for both users *and* agents** — you *see* your work as a live board; the agent walks the same graph. |
 | 2 | We **can't keep track of our code**. | WorkBoard **tracks live what Claude is working on** and what it just shipped — without you typing anything. |
 | 3 | You're **generating ideas faster** than you can act on them. | Card them on the spot — as cards or subtasks. Later, just say *"Do #426"* — or chain them: *"Do #426, #123 and #99."* Each one picks up exactly where it was left. |
 | 4 | You're getting more done than ever — but **how do you remember what shipped**, why, which files? | Every card has a **title** (the gist) and a **short description**; the deeper work (subtasks, writeup, files, commits) hangs off as leaf nodes. Future Claude reads a tiny digest first and **traverses only the leaves it needs** — answering "what did we do on OAuth in May?" costs a handful of tokens, not a re-read of every chat log. |
@@ -48,31 +56,31 @@ cd WorkBoard
 
 1. **Every Task is Captured.** Before any work begins, the request is captured as a card in the **Task** column.
 
-2. **Immediately know what Claude is working on.** The moment Claude starts working on it, the card glides into **In Progress** and pulsates — so at a glance you know exactly which card it's on. *Working on multiple projects at once? WorkBoard knows which board belongs to which project and updates each accordingly.*
+2. **Immediately know what Claude is working on.** The moment Claude starts working on it, the card moves into **In Progress** and pulsates — so at a glance you know exactly which card it's on. *Working on multiple projects at once? WorkBoard knows which board belongs to which project and updates each accordingly.*
 
     <img src="docs/assets/inprogress-pulsating.gif" width="360" alt="A card pulsating in the In Progress column — at a glance, you can see which task Claude is currently working on, even with multiple sessions running">
 
-3. **Shipped → Done, with a write-up.** Once finished, Claude writes a description of **what was done**, **why this problem existed in the first place**, and ✓ a write-up of **how it was done**. The card flies to Done.
+3. **Shipped → Done, with a write-up.** Once finished, Claude writes a description of **what was done**, **why this problem existed in the first place**, and a write-up of **how it was done**. The card moves to Done.
 
-4. **Bug? Back to In Progress.** If something breaks — or more changes are needed — the card animates **back out of Done** with a `🐞 bug` tag, or with an added subtask if it's just a follow-up.
+4. **Bug? Back to In Progress.** If something breaks — or more changes are needed — the card moves **back out of Done** with a `bug` tag, or with an added subtask if it's just a follow-up.
 
-5. **Re-shipped → Done.** Once fixed, the card returns to Done — with the full ship → bug → fix → ship arc preserved in its history… **ready for traversal**.
+5. **Re-shipped → Done.** Once fixed, the card returns to Done — with the full ship → bug → fix → ship arc preserved in its history, ready for traversal.
 
 ---
 
 ## Features
 
-### 1. 🏷️ Filter by tag — find what you need fast
+### 1. Filter by tag — find what you need fast
 When a card is created, it's automatically tagged with the work-type it belongs to (e.g. `UI`, `security`, `bug`, `refactor`). Click any tag chip to filter the board down to only that slice — answering *"what's open on the UI side right now?"* in one click.
 
 <img src="docs/assets/tags-filter.gif" width="320" alt="Clicking a tag chip filters the board down to only cards carrying that tag — UI, security, bug, etc.">
 
-### 2. 📅 Calendar View
-See what shipped — and what's **still open** — laid out by date. Catch missed work from yesterday, spot productive streaks, or look back at your wonderful week of progress at a glance! You can use it to show your boss what a Teacher's pet you've been (or not).
+### 2. Calendar View
+See what shipped — and what's **still open** — laid out by date. Catch missed work from yesterday, spot productive streaks, or look back at what got done over a week.
 
 ![Calendar view — what shipped, day by day, with what's still outstanding](docs/assets/calendar-view.gif)
 
-### 3. ✅ Subtasks track the real work, step by step
+### 3. Subtasks track the real work, step by step
 
 **The live tick.** Each card breaks down into the steps the agent will actually take. Subtasks tick off one by one as the work progresses — so even mid-task you can see exactly how far along Claude is (e.g. *2/4*), not just *"in progress."*
 
@@ -83,91 +91,30 @@ See what shipped — and what's **still open** — laid out by date. Catch misse
 - **Origin** — why this card exists, in the user's own words.
 - **Subtasks** — the concrete steps Claude will (or did) take, ticked off one by one.
 - **Notes** — anything jotted along the way (reasoning, dead ends, decisions).
-- **Tags** — work-type chips (`UI`, `security`, `performance`, `infra`, `docs`, `bug`, `refactor`…) — click any to filter the board.
+- **Tags** — work-type chips (`UI`, `security`, `performance`, `infra`, `docs`, `bug`, `refactor`...) — click any to filter the board.
 - **Priority** — a `C` / `M` / `L` chip in the corner (Critical / Mid / Low, or unset).
 - **Linked files** — auto-attached the moment Claude edits a file under the card. Walks both ways: from card → which files, from a file → which card touched it.
 - **Linked cards** — explicit `card.py link <a> <b>` edges between related work. This is the *graph* in "knowledge graph."
-- **Write-up** — added when the card flies to Done: what shipped, why, and how it was verified (commits, files, tests).
+- **Write-up** — added when the card moves to Done: what shipped, why, and how it was verified (commits, files, tests).
 
 ![A card with subtasks expanded — every step of the work, visible at a glance](docs/assets/actual-card-subtasks.png)
 
-### 4. `🐞 bug` — The card flies back out of Done, full history kept
-**Debugging?** As you (or Claude) is working, it animates back out of Done into In Progress with a `🐞 bug` tag and a new subtask for the fix. The card's history shows the entire ship → bug → fix → ship arc, **so the story is never lost.**
+### 4. `bug` — The card moves back out of Done, full history kept
+**Debugging?** As you (or Claude) is working, it moves back out of Done into In Progress with a `bug` tag and a new subtask for the fix. The card's history shows the entire ship → bug → fix → ship arc, so the story is never lost.
 
 <img src="docs/assets/bug-to-and-fro.gif" width="480" alt="A card moving from Done back to In Progress with a bug tag, getting fixed, then returning to Done">
 
 ---
 
-## 📊 Token-Efficiency Summary — WorkBoard vs mem0 · claude-mem · Letta · graphify
+## Token efficiency
 
-### Why is WorkBoard cheaper?
+WorkBoard is designed to be **cheap to build and maintain**: 0 model calls to persist your work, and the 130 KB+ `board.json` is never auto-loaded into context. See [`docs/TOKEN_BUDGET.md`](docs/TOKEN_BUDGET.md) for the measured per-session cost breakdown.
 
-1. **Carding is inline — zero extra model calls.** WorkBoard writes the card *during* your normal turn: the agent runs a deterministic `card.py` command and the writeup is text it already produced — **no separate session, no extra inference pass.** mem0, claude-mem and Letta instead spin up a **dedicated model call** to remember (claude-mem compresses *every* session via a ~5K-token call) — pure overhead on top of your normal usage.
-2. **It doesn't run on every turn.** Unlike Letta (memory re-sent every turn) and the per-session extractors, WorkBoard writes **only when there's something to record**.
-3. **No "full dump."** Even when it records, it never dumps your entire history — it writes **only what's needed**, so it never burns extra tokens.
-4. **What it saves is structured, not a blob** — each card carries:
-   - **Title** — a one-line overview, for fast future retrieval
-   - **Origin / why it exists** (+ **Notes**) — the context behind it
-   - **✓ Writeup** — once it's done, *how* it was done (commits, files)
-5. **Recall is a cheap tree-walk.** An agent finds a past workflow by traversing the graph — reading the **title** first, the description *only if needed* → **origin / why** → **how it was done** — a handful of tokens, never a re-read of everything.
-
-*[**Read the full study here →**](Research/token_comparison/MASTER_SUMMARY.md)*
-
-**How it works:** WorkBoard's figures are *measured* (its real recall + real bootstrap, run against a frozen snapshot of real Claude-Code history); each peer comes from its own published numbers or a real sandboxed run. **What the rows mean:**
-
-- **Build the memory** — the one-time cost to turn your *past* history into memory.
-- **Persist / session** — the ongoing cost to *save* each new session's work.
-- **Live loop *(100 sessions × 3 recalls)*** — persist **+** recall combined over a project's life; the real steady-state cost.
-- **Per single recall** — tokens to answer *one* question.
-- **Recall vs full-context *(26K)*** — savings vs pasting your whole ~26,000-token history into every prompt (the naive baseline mem0's *"90%"* is measured against).
-- *(Letta)* **In-context memory / turn** — memory re-sent on **every** turn · *(graphify)* **Always-on / prompt** + **SKILL.md on engage** — per-prompt and on-engagement load.
-
-### WorkBoard vs mem0
-
-| Axis | WorkBoard (WB) | mem0 | Winner |
-|---|--:|--:|:--|
-| Build the memory | 64,162 Tok | 5,095,769 Tok | 🟢 **WB 98.7% cheaper** |
-| Persist / session | **0 model calls** | 1 LLM extract call (~5,462 Tok) + embed | 🟢 **WB (free)** |
-| Live loop *(100 sessions × 3)* | 719,700 Tok | 1,086,200 Tok | 🟢 **WB 33.7% cheaper** |
-| Per single recall | 2,399 Tok | 1,800 Tok | mem0 *(leaner)* |
-| Recall vs full-context *(26K)* | 90.8% fewer | 93.1% fewer | ~tie |
-
-### WorkBoard vs claude-mem
-
-| Axis | WorkBoard (WB) | claude-mem | Winner |
-|---|--:|--:|:--|
-| Build the memory | ~10,546 Tok | 5,095,769 Tok | 🟢 **WB ~99% cheaper** |
-| Persist / session | **0 model calls** | 1 compression call *(full tier)* | 🟢 **WB (free)** |
-| Live loop *(100 sessions × 3)* | 719,700 Tok | 1,517,300 Tok | 🟢 **WB 52.6% cheaper** |
-| Per single recall | 2,399 Tok | 3,237 Tok | 🟢 **WB 25.9% cheaper** |
-| Backfill past history | mines your history | forward-only *(no bulk command)* | 🟢 **WB** |
-
-### WorkBoard vs Letta (MemGPT)
-
-| Axis | WorkBoard (WB) | Letta | Winner |
-|---|--:|--:|:--|
-| In-context memory / turn | 306 Tok *(0 carried)* | 3,444 Tok *(blocks + tool schemas + prompt)* | 🟢 **WB** |
-| Persist / session | **0 model calls** | LLM tool-call per write + compaction | 🟢 **WB** |
-| Live loop *(100 × 50 × 3)* | 2,259,400 Tok *(929,400 trimmed)* | 11,909,200 Tok | 🟢 **WB 81.0% cheaper** |
-| Per single recall | 2,399 Tok | 1,064 Tok | Letta *(leaner)* |
-
-### WorkBoard vs graphify *(code knowledge-graph — different domain)*
-
-| Axis | WorkBoard (WB) | graphify | Winner |
-|---|--:|--:|:--|
-| Always-on / prompt | 306 Tok | 61 Tok *(cached)* | graphify |
-| SKILL.md on engage | 5,898 Tok | 8,245 Tok *(+9,704 refs)* | 🟢 **WB 28.5% cheaper** |
-| Per recall | 2,399 Tok *(work Qs)* | 1,374 Tok *(code Qs)* | different questions |
-| Write / keep current | 0 | 0 | tie |
-| Big artifact autoload | never | never | tie |
-
-> *WorkBoard's "Build the memory" figure varies with harvest config (hourly bucket size) — both shown are **under 1.3% of the peer's** per-session compression total, so the **reduction %** is the robust number.*
-
-The 130 KB+ `board.json` is **never auto-loaded** — context stays clean no matter how big the board grows.
+For a detailed comparison against mem0, claude-mem, Letta, and graphify — including the measured reduction percentages and an honest framing of methodology limits — see [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
 
 ---
 
-## ⚖️ But what's the disadvantage?
+## But what's the disadvantage?
 
 WorkBoard is cheaper because it **only records what gets carded** — structured *outcomes* (what shipped, why, how), **not your entire raw conversation**. That's a real trade-off:
 
@@ -181,7 +128,7 @@ WorkBoard is cheaper because it **only records what gets carded** — structured
 
 ## Under the hood
 
-### 🔒 Hook-enforced — the board literally can't drift
+### Hook-enforced — the board literally can't drift
 Four Claude Code hooks keep the agent honest in real time, so tracking isn't a thing the agent *should* do — it's a thing that *happens*:
 
 | Hook | Fires on | What it does |
@@ -195,7 +142,7 @@ The net effect: **the user never has to ask "did you update the board?"** — an
 
 ### Core components
 
-- **Local board server** at `127.0.0.1:7891` — pure Python stdlib, no framework, no dependencies. Serves the animated UI, a live SSE event stream (`/events`), and a tiny REST surface (`/progress`, `/health`, `/rev`). Auto-managed by `launchd` (macOS) / `systemd` (Linux) / Task Scheduler (Windows); the SessionStart hook respawns it if it dies.
+- **Local board server** at `127.0.0.1:7891` — pure Python stdlib, no framework, no dependencies. Serves the animated UI, a live SSE event stream (`/events`), and a tiny REST surface (`/progress`, `/health`, `/rev`). Can be registered as a login service via `launchd` (macOS) / `systemd` (Linux) / Task Scheduler (Windows) — **opt-in via `--autostart`** (off by default); the SessionStart hook respawns it on demand otherwise.
 
 - **`board.json` — a knowledge graph in JSON, not a vector DB** — single file per project; cards (nodes) + history/subtasks/links (typed edges). Atomic writes via cross-process `flock`, rolling `.backups/` directory on every write. Deliberate choice over SQLite/Chroma: it's readable, diff-able, copy-pasteable between machines, and git-friendly. The 130 KB+ file is **never auto-loaded** — Claude reads a ~220-token digest first and traverses only the cards it needs.
 
@@ -203,15 +150,15 @@ The net effect: **the user never has to ask "did you update the board?"** — an
 
 - **Live SSE updates** — every write broadcasts a typed event (`card-added`, `card-updated`, `card-removed`, `card-flash`, `column-*`, `rev-bumped`). All open browser tabs and Claude sessions sync in real time, **no polling**.
 
-- **Multi-Claude, multi-board, multi-tab** — every Claude session opens its own `?sid=`-bound tab. Each pulses its **own** active card (`state.activeWork = {sid: {cardId, ts}}`): N concurrent sessions = N concurrent pulses, no fight over a single "current task." A port registry tracks which board belongs to which project; **rev-as-CAS** (`#609`) prevents lost updates when two sessions write the same card simultaneously.
+- **Multi-Claude, multi-board, multi-tab** — every Claude session opens its own `?sid=`-bound tab. Each pulses its **own** active card (`state.activeWork = {sid: {cardId, ts}}`): N concurrent sessions = N concurrent pulses, no fight over a single "current task." A port registry tracks which board belongs to which project; **rev-as-CAS** prevents lost updates when two sessions write the same card simultaneously.
 
 - **Reinforcement: advisory by default, strict on demand** — the Stop hook's sign-off backstop is silent and free (0 tokens, just writes a note). Power users opt in via `BOARD_STEWARD_STRICT=1` — same-turn enforcement that loops the agent back to card the work before ending its turn. Single-shot, with a hard-coded escape so a false positive can't trap the agent.
 
 - **History Replay — fly past work onto a fresh board** — on first run, a detached **Haiku** subprocess (cheapest tier) mines your past Claude Code sessions and reconstructs them as cards, flying them onto the board `task → in-progress → done`, complete with bug-bounces. Runs out-of-band so it never enters the interactive session's context.
 
-- **Crash-safe by construction** — `flock` + rolling backups + a `recover` CLI to restore from any backup; `repair-links` to fix broken cross-card references; `migrate` to evolve the schema. Three months in, your board self-heals.
+- **Crash-safe by construction** — `flock` + rolling backups + a `recover` CLI to restore from any backup; `repair-links` to fix broken cross-card references; `migrate` to evolve the schema.
 
-- **Token-cheap by design** — among the cheapest to **build and maintain**: **0 model calls** to persist your work, and the 130 KB+ `board.json` is **never auto-loaded** into context. See [`docs/TOKEN_BUDGET.md`](docs/TOKEN_BUDGET.md) for the measurements, and [`docs/COMPARISON.md`](docs/COMPARISON.md) for the knowledge-graph-vs-memory-store framing in full.
+- **Token-cheap by design** — 0 model calls to persist your work, and the 130 KB+ `board.json` is **never auto-loaded** into context. See [`docs/TOKEN_BUDGET.md`](docs/TOKEN_BUDGET.md) for the measurements, and [`docs/COMPARISON.md`](docs/COMPARISON.md) for the knowledge-graph-vs-memory-store framing in full.
 
 ---
 
@@ -219,7 +166,7 @@ The net effect: **the user never has to ask "did you update the board?"** — an
 
 **On first run**, WorkBoard reads through your recent Claude Code conversation history to work out what you've been working on, then **prompts you to pick which board to build**. By **default it looks back 2 days**. You can ask for a wider window — e.g. *"build a board from the past 7 days"* — to pull N days of history.
 
-> ⚠️ **Going far back isn't recommended.** The further back you reach, the more work it finds — and you can end up **overpopulated with cards**. The default stays conservative at **2 days** for that reason; widen it only when you actually want a bigger backfill.
+> **Going far back isn't recommended.** The further back you reach, the more work it finds — and you can end up **overpopulated with cards**. The default stays conservative at **2 days** for that reason; widen it only when you actually want a bigger backfill.
 
 ---
 
@@ -227,8 +174,13 @@ The net effect: **the user never has to ask "did you update the board?"** — an
 
 - [`docs/KEY_FEATURES.md`](docs/KEY_FEATURES.md) — the full feature tour
 - [`docs/TOKEN_BUDGET.md`](docs/TOKEN_BUDGET.md) — measured token cost vs. peer memory tools
+- [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) — token-efficiency comparison tables (mem0, claude-mem, Letta, graphify)
+- [`docs/INSTALL.md`](docs/INSTALL.md) — exact install footprint, uninstall steps, and `--dry-run` preview
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — repo layout, internals, and contributing
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to contribute + the `#NNN` internal card-id convention
 - [`CHANGELOG.md`](CHANGELOG.md) — release history
+
+A stdlib test suite runs on every push via GitHub Actions CI (Linux + Windows, Python 3.9 and 3.12). See [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to run tests locally.
 
 ---
 
