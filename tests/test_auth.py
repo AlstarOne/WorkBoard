@@ -1,4 +1,4 @@
-"""Security: een netwerk-bind (0.0.0.0 / LAN-IP) mag nooit ongeauthenticeerd zijn."""
+"""Security: a network bind (0.0.0.0 / LAN IP) must never be unauthenticated."""
 import sys
 import unittest
 from pathlib import Path

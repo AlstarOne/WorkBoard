@@ -1023,20 +1023,26 @@ _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", ""}
 
 
 def _is_loopback(host: str) -> bool:
-    """True als binden op `host` alleen de loopback-interface blootstelt.
-    0.0.0.0 en :: binden ALLE interfaces (ook het LAN) → NIET loopback."""
+    """True if binding `host` only exposes the loopback interface.
+    0.0.0.0 and :: bind ALL interfaces (including the LAN), so they are NOT
+    loopback; 127.0.0.1, ::1 and localhost ARE.
+
+    The match is intentionally conservative/exact — an unrecognized spelling
+    falls through to requiring auth (fail-safe over-protection), which is
+    preferred over ever misclassifying a network-exposing host as loopback."""
     return host in _LOOPBACK_HOSTS
 
 
 def resolve_auth_token(host, explicit_token=None, insecure=False):
-    """Bepaal welk bearer-token de server moet afdwingen.
+    """Determine which bearer token the server should enforce.
 
-    - Een expliciet token (CLI/env) wint altijd.
-    - Op een loopback-only bind is geen token nodig (lokaal; ongewijzigd gedrag).
-    - Op een NETWERK-bind (0.0.0.0 / LAN-IP) zonder token: genereer er automatisch
-      één, zodat het bord nooit ongeauthenticeerd op het netwerk staat.
-      `insecure=True` (--insecure-no-auth) is de bewuste escape die het open laat.
-    Geeft het te handhaven token terug, of None voor "geen auth".
+    - An explicit token (CLI/env) always wins.
+    - A loopback-only bind needs no token (local, unchanged behavior).
+    - A network bind (0.0.0.0 / LAN IP) without a token auto-generates one so
+      the board is never exposed unauthenticated on the network.
+      `insecure=True` (--insecure-no-auth) is the deliberate escape hatch that
+      leaves it open.
+    Returns the token to enforce, or None for "no auth".
     """
     # Treat blank/empty token as "not supplied": a falsy check ensures an empty
     # string never silently leaves a network bind unauthenticated. Use --insecure-no-auth to deliberately run open.
@@ -1055,8 +1061,8 @@ def _run_server(board_dir, args):
     BoardHandler.auth_token = resolve_auth_token(
         args.host, args.auth_token, getattr(args, "insecure_no_auth", False))
     if BoardHandler.auth_token and not args.auth_token:
-        print("🔒 netwerk-bind zonder token — automatisch een token gegenereerd; "
-              "scan-URL volgt hieronder.", file=sys.stderr)
+        print("🔒 network bind without a token — generated one automatically; "
+              "scan-URL below.", file=sys.stderr)
     _load_initial_cache(board_dir)
     # Resolve THIS board's designated port (#374). Idempotent + sticky: the
     # board keeps the same port across restarts, and a second project whose
