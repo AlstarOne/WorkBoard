@@ -27,14 +27,20 @@ class AtomicSaveCasTest(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.board = self.tmp / "board.json"
         self.board.write_text(json.dumps(MINIMAL_BOARD))
+        self._saved_board_no_server = os.environ.get("BOARD_NO_SERVER")
         os.environ["BOARD_NO_SERVER"] = "1"
         card_state._HOLDING_LOCK = True
+        self._orig_regen = card_state.REGEN_SCRIPT
         card_state.REGEN_SCRIPT = self.tmp / "nope.py"  # bestaat niet → geen regen-subprocess
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
-        os.environ.pop("BOARD_NO_SERVER", None)
+        if self._saved_board_no_server is not None:
+            os.environ["BOARD_NO_SERVER"] = self._saved_board_no_server
+        else:
+            os.environ.pop("BOARD_NO_SERVER", None)
         card_state._HOLDING_LOCK = False
+        card_state.REGEN_SCRIPT = self._orig_regen
 
     def test_atomic_save_bumps_rev_and_returns_new_rev(self):
         d = card_state.load(self.board)

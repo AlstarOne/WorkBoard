@@ -12,16 +12,22 @@ import port_registry  # noqa: E402
 
 
 class PortRegistryTest(unittest.TestCase):
+    _ENV_KEYS = ("BOARD_REGISTRY", "BOARD_ASSIGNMENTS", "BOARD_ACTIVE")
+
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
+        self._saved = {k: os.environ.get(k) for k in self._ENV_KEYS}
         os.environ["BOARD_REGISTRY"] = str(self.tmp / "registry.json")
         os.environ["BOARD_ASSIGNMENTS"] = str(self.tmp / "assignments.json")
         os.environ["BOARD_ACTIVE"] = str(self.tmp / "last-active")
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
-        for k in ("BOARD_REGISTRY", "BOARD_ASSIGNMENTS", "BOARD_ACTIVE"):
-            os.environ.pop(k, None)
+        for k in self._ENV_KEYS:
+            if self._saved[k] is not None:
+                os.environ[k] = self._saved[k]
+            else:
+                os.environ.pop(k, None)
 
     def _board(self, name):
         d = self.tmp / name
