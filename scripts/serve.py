@@ -29,6 +29,7 @@ import json
 import os
 import queue
 import re
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -813,6 +814,10 @@ def _build_arg_parser():
                          "(Authorization: Bearer / ?t= / cookie). Pair with "
                          "--host 0.0.0.0 to glance at the board on your phone. "
                          "Defaults to $BOARD_AUTH_TOKEN.")
+    ap.add_argument("--insecure-no-auth", action="store_true",
+                    help="Bewuste escape: laat een netwerk-bind (--host 0.0.0.0) "
+                         "ZONDER token draaien. Standaard genereert WorkBoard "
+                         "automatisch een token bij een netwerk-bind.")
     ap.add_argument("--profile", default="software",
                     choices=["software", "marketing", "research", "product", "operations"],
                     help="Tag taxonomy profile for bootstrap (default: software)")
@@ -1015,10 +1020,42 @@ def _print_lan_url(args):
           f"   http://{lan_ip}:{args.port}/?t={BoardHandler.auth_token}", flush=True)
 
 
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", ""}
+
+
+def _is_loopback(host: str) -> bool:
+    """True als binden op `host` alleen de loopback-interface blootstelt.
+    0.0.0.0 en :: binden ALLE interfaces (ook het LAN) → NIET loopback."""
+    return host in _LOOPBACK_HOSTS
+
+
+def resolve_auth_token(host, explicit_token=None, insecure=False):
+    """Bepaal welk bearer-token de server moet afdwingen.
+
+    - Een expliciet token (CLI/env) wint altijd.
+    - Op een loopback-only bind is geen token nodig (lokaal; ongewijzigd gedrag).
+    - Op een NETWERK-bind (0.0.0.0 / LAN-IP) zonder token: genereer er automatisch
+      één, zodat het bord nooit ongeauthenticeerd op het netwerk staat.
+      `insecure=True` (--insecure-no-auth) is de bewuste escape die het open laat.
+    Geeft het te handhaven token terug, of None voor "geen auth".
+    """
+    if explicit_token:
+        return explicit_token
+    if _is_loopback(host):
+        return None
+    if insecure:
+        return None
+    return secrets.token_urlsafe(16)
+
+
 def _run_server(board_dir, args):
     """Configure the handler, register our port, and serve until interrupted."""
     BoardHandler.board_dir = board_dir
-    BoardHandler.auth_token = args.auth_token or None
+    BoardHandler.auth_token = resolve_auth_token(
+        args.host, args.auth_token, getattr(args, "insecure_no_auth", False))
+    if BoardHandler.auth_token and not args.auth_token:
+        print("🔒 netwerk-bind zonder token — automatisch een token gegenereerd; "
+              "scan-URL volgt hieronder.", file=sys.stderr)
     _load_initial_cache(board_dir)
     # Resolve THIS board's designated port (#374). Idempotent + sticky: the
     # board keeps the same port across restarts, and a second project whose
