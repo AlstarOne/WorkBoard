@@ -44,12 +44,24 @@ class InstallDryRunTest(unittest.TestCase):
     def test_dry_run_reports_footprint(self):
         out = self._run().stdout.lower()
         self.assertIn("dry-run", out)
-        self.assertIn("hook", out)
+        self.assertIn("hooks", out)
         self.assertIn("autostart", out)
 
     def test_autostart_is_opt_in_by_default(self):
         out = self._run().stdout.lower()
+        self.assertIn("autostart", out)
         self.assertIn("skipped", out)  # autostart skipped tenzij --autostart
+
+    def test_dry_run_ignores_demo_and_writes_nothing(self):
+        # --demo + --dry-run: the demo block (which mktemp/mkdir's) must be skipped,
+        # so the no-write guarantee stays absolute.
+        r = self._run("--demo")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout.lower()
+        self.assertIn("dry-run", out)
+        self.assertNotIn("demo mode", out)  # demo block did not run
+        self.assertFalse((self.home / ".claude" / "skills" / "board-steward").exists())
+        self.assertFalse((self.home / ".claude" / "settings.json").exists())
 
     def test_autostart_flag_enables_in_report(self):
         out = self._run("--autostart").stdout.lower()

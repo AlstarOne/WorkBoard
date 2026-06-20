@@ -91,7 +91,7 @@ warn() { printf '\033[1;33m  ! %s\033[0m\n' "$*"; }
 
 # ---- demo isolation ----------------------------------------------------------
 DEMO_HOME=""
-if [ "$DEMO" = "1" ]; then
+if [ "$DEMO" = "1" ] && [ "$DRY" = "0" ]; then
   # Refuse the real ports so a live setup is never clobbered.
   if [ "$PORT" = "7891" ] || [ "$PORT" = "7892" ]; then PORT=7896; fi
   # Isolated config dir → hooks + skill land here, real ~/.claude untouched.
