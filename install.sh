@@ -7,6 +7,8 @@
 #
 #     ./install.sh                      # install skill + bootstrap a board in $(pwd)
 #     ./install.sh --project ~/code/foo # ...in a specific project
+#     ./install.sh --dry-run            # PRINT exactly what it would do, write NOTHING
+#     ./install.sh --autostart          # also register a login service (opt-in; off by default)
 #     ./install.sh --demo               # ISOLATED dry-run of the whole experience
 #     ./install.sh --demo --harvest ~/code/foo   # ...filled (flying) from real history
 #     ./install.sh --demo --harvest ~/code/foo --fill haiku  # ...filled AUTONOMOUSLY (no main-Claude step)
@@ -47,7 +49,8 @@ PICK_DAYS=3          # history window the #375 project picker scans
 PORT=7891
 DEMO=0
 OPEN_BROWSER=1
-DO_AUTOSTART=1
+DO_AUTOSTART=0
+DRY=0
 DO_HOOKS=1
 DO_SKILL=1
 HARVEST=""          # if set: mine THIS real project's history into the (isolated) board
@@ -65,6 +68,8 @@ while [ $# -gt 0 ]; do
     --harvest-days) HARVEST_DAYS="$2"; shift 2 ;;
     --fill)    FILL="$2"; shift 2 ;;
     --no-open) OPEN_BROWSER=0; shift ;;
+    --dry-run) DRY=1; shift ;;
+    --autostart) DO_AUTOSTART=1; shift ;;
     --no-autostart) DO_AUTOSTART=0; shift ;;
     --no-hooks)     DO_HOOKS=0; shift ;;
     --skip-skill)   DO_SKILL=0; shift ;;
@@ -129,7 +134,7 @@ say "WorkBoard installer  (repo: ${REPO})"
 # signal — same convo source the task extractor uses; NO git-root walking, NO
 # $HOME filesystem scan) and let them single-pick one. Running inside a real
 # repo (PROJECT != $HOME) keeps the old cwd behaviour untouched.
-if [ "$DEMO" = "0" ] && [ "$PROJECT_EXPLICIT" = "0" ] && [ -z "$HARVEST" ] \
+if [ "$DEMO" = "0" ] && [ "$DRY" = "0" ] && [ "$PROJECT_EXPLICIT" = "0" ] && [ -z "$HARVEST" ] \
    && [ -t 0 ] && [ "$PROJECT" = "$HOME" ]; then
   PICK_PATHS=(); PICK_LABELS=()
   while IFS=$'\t' read -r _p _label; do
@@ -159,6 +164,30 @@ if [ "$DEMO" = "0" ] && [ "$PROJECT_EXPLICIT" = "0" ] && [ -z "$HARVEST" ] \
   else
     warn "no recent projects found in history — using \$HOME (${PROJECT})"
   fi
+fi
+
+# ---- dry-run: report the footprint, write nothing, exit ----------------------
+if [ "$DRY" = "1" ]; then
+  CFG_BASE="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+  echo
+  say "DRY-RUN — what a real install would do (nothing below is written):"
+  echo "  1. skill     → symlink ${REPO}"
+  echo "               → ${CFG_BASE}/skills/board-steward"
+  echo "  2. hooks     → wire the board-steward hooks (SessionStart, UserPromptSubmit,"
+  echo "                 PreToolUse, Stop, SubagentStop) into ${CFG_BASE}/settings.json"
+  echo "  3. server    → bootstrap a board in ${PROJECT}"
+  echo "               → serve on http://127.0.0.1:${PORT} (sticky per-project port)"
+  if [ "$DO_AUTOSTART" = "1" ]; then
+    echo "  4. autostart → register a login service (launchd / systemd / Task Scheduler)"
+  else
+    echo "  4. autostart → SKIPPED (opt-in — re-run with --autostart to enable)"
+  fi
+  if [ "$OPEN_BROWSER" = "1" ]; then
+    echo "  5. browser   → open http://127.0.0.1:${PORT}"
+  fi
+  echo
+  ok "DRY-RUN complete — no files, hooks, services, ports, or servers were created."
+  exit 0
 fi
 
 # ---- 1. skill ----------------------------------------------------------------
@@ -271,7 +300,7 @@ if [ "$DO_AUTOSTART" = "1" ]; then
     && ok "autostart registered (login → server on :${PORT})" \
     || warn "autostart step reported an issue (non-fatal)"
 else
-  [ "$DEMO" = "1" ] && warn "skipping autostart (demo)" || warn "skipping autostart (--no-autostart)"
+  [ "$DEMO" = "1" ] && warn "skipping autostart (demo)" || warn "autostart not registered (opt-in — pass --autostart to enable)"
 fi
 
 # ---- 5. open browser ---------------------------------------------------------
