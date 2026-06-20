@@ -16,7 +16,7 @@ class ResolveAuthTokenTest(unittest.TestCase):
             serve.resolve_auth_token("127.0.0.1", explicit_token="abc"), "abc")
 
     def test_loopback_needs_no_token(self):
-        for host in ("127.0.0.1", "::1", "localhost"):
+        for host in ("127.0.0.1", "::1", "localhost", ""):
             self.assertIsNone(serve.resolve_auth_token(host))
 
     def test_network_bind_without_token_autogenerates(self):
@@ -28,6 +28,13 @@ class ResolveAuthTokenTest(unittest.TestCase):
     def test_insecure_flag_keeps_network_bind_open(self):
         self.assertIsNone(
             serve.resolve_auth_token("0.0.0.0", insecure=True))
+
+    def test_blank_explicit_token_still_protects_network_bind(self):
+        # An empty/blank token must NOT be honored as "no auth" on a network bind —
+        # it falls through to auto-generation so the LAN bind is never unauthenticated.
+        tok = serve.resolve_auth_token("0.0.0.0", explicit_token="")
+        self.assertIsInstance(tok, str)
+        self.assertGreaterEqual(len(tok), 16)
 
 
 if __name__ == "__main__":

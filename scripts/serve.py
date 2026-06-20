@@ -815,9 +815,8 @@ def _build_arg_parser():
                          "--host 0.0.0.0 to glance at the board on your phone. "
                          "Defaults to $BOARD_AUTH_TOKEN.")
     ap.add_argument("--insecure-no-auth", action="store_true",
-                    help="Bewuste escape: laat een netwerk-bind (--host 0.0.0.0) "
-                         "ZONDER token draaien. Standaard genereert WorkBoard "
-                         "automatisch een token bij een netwerk-bind.")
+                    help="Deliberate escape: run a network bind (--host 0.0.0.0) WITHOUT a token. "
+                         "By default WorkBoard auto-generates a token for a network bind.")
     ap.add_argument("--profile", default="software",
                     choices=["software", "marketing", "research", "product", "operations"],
                     help="Tag taxonomy profile for bootstrap (default: software)")
@@ -1039,6 +1038,8 @@ def resolve_auth_token(host, explicit_token=None, insecure=False):
       `insecure=True` (--insecure-no-auth) is de bewuste escape die het open laat.
     Geeft het te handhaven token terug, of None voor "geen auth".
     """
+    # Treat blank/empty token as "not supplied": a falsy check ensures an empty
+    # string never silently leaves a network bind unauthenticated. Use --insecure-no-auth to deliberately run open.
     if explicit_token:
         return explicit_token
     if _is_loopback(host):
